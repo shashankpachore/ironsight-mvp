@@ -1,65 +1,132 @@
-import Image from "next/image";
+import Link from "next/link";
+import { headers } from "next/headers";
+import { CreateDealForm } from "@/components/create-deal-form";
+import { formatInr } from "@/lib/currency";
+import { sortDealsByDisplayOrder } from "@/lib/deal-order";
 
-export default function Home() {
+type DealItem = {
+  id: string;
+  name: string;
+  value: number;
+  stage: string;
+  lastActivityAt: string;
+  missingSignals: string[];
+  account: { name: string };
+};
+
+export default async function Home() {
+  const incomingHeaders = await headers();
+  const host = incomingHeaders.get("host");
+  const protocol = process.env.NODE_ENV === "development" ? "http" : "https";
+  const cookieHeader = incomingHeaders.get("cookie");
+
+  const forwardHeaders: Record<string, string> = {};
+  if (cookieHeader) forwardHeaders.cookie = cookieHeader;
+
+  let deals: DealItem[] = [];
+  let loadError = "";
+  if (host) {
+    const dealsRes = await fetch(`${protocol}://${host}/api/deals`, {
+      headers: forwardHeaders,
+      cache: "no-store",
+    });
+    if (dealsRes.ok) {
+      deals = (await dealsRes.json()) as DealItem[];
+    } else {
+      loadError = "Could not load deals for current user.";
+    }
+  } else {
+    loadError = "Could not resolve server host for deals.";
+  }
+
+  const enriched = deals.map((deal) => ({
+    ...deal,
+    lastActivityAtLabel: new Date(deal.lastActivityAt).toLocaleString(),
+  }));
+  const sortedDeals = sortDealsByDisplayOrder(enriched);
+  const activeDeals = sortedDeals.filter((deal) => deal.stage !== "CLOSED");
+  const closedDeals = sortedDeals.filter((deal) => deal.stage === "CLOSED");
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="mx-auto max-w-5xl p-6 space-y-6">
+      <h1 className="text-2xl font-semibold">Ironsight - Deal Tracker</h1>
+      <div className="flex gap-4 text-sm">
+        <Link href="/accounts" className="underline">
+          Accounts
+        </Link>
+        <Link href="/pipeline" className="underline">
+          Pipeline
+        </Link>
+        <Link href="/users" className="underline">
+          Users
+        </Link>
+        <Link href="/audit" className="underline">
+          Audit
+        </Link>
+        <a href="/api/export" className="underline">
+          Export Data
+        </a>
+      </div>
+
+      <section className="border rounded-lg p-4">
+        <h2 className="font-medium mb-3">Create Deal</h2>
+        <CreateDealForm />
+      </section>
+
+      <section className="border rounded-lg p-4">
+        <h2 className="font-medium mb-3">Deals</h2>
+        {loadError ? <p className="text-sm text-red-600 mb-2">{loadError}</p> : null}
+        <div className="space-y-3">
+          {activeDeals.map((deal) => (
+            <Link
+              href={`/deals/${deal.id}`}
+              key={deal.id}
+              className="block border rounded p-3 hover:bg-gray-50"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              <p className="text-lg font-semibold">{deal.account.name}</p>
+              <p className="text-sm text-gray-700">Product: {deal.name}</p>
+              <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
+              <p className="text-sm">Stage: {deal.stage}</p>
+              <p className="text-sm">
+                Last activity: {deal.lastActivityAtLabel}
+              </p>
+              <p className="text-sm">
+                Missing:{" "}
+                {deal.missingSignals.length
+                  ? deal.missingSignals.join(", ")
+                  : "None"}
+              </p>
+            </Link>
+          ))}
+          {activeDeals.length > 0 && closedDeals.length > 0 ? (
+            <div className="pt-2 border-t">
+              <p className="text-sm font-medium text-gray-700">Closed Deals</p>
+            </div>
+          ) : null}
+          {closedDeals.map((deal) => (
+            <Link
+              href={`/deals/${deal.id}`}
+              key={deal.id}
+              className="block border rounded p-3 hover:bg-gray-50"
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              <p className="text-lg font-semibold">{deal.account.name}</p>
+              <p className="text-sm text-gray-700">Product: {deal.name}</p>
+              <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
+              <p className="text-sm">Stage: {deal.stage}</p>
+              <p className="text-sm">
+                Last activity: {deal.lastActivityAtLabel}
+              </p>
+              <p className="text-sm">
+                Missing:{" "}
+                {deal.missingSignals.length
+                  ? deal.missingSignals.join(", ")
+                  : "None"}
+              </p>
+            </Link>
+          ))}
+          {sortedDeals.length === 0 ? <p>No deals yet.</p> : null}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      </section>
+    </main>
   );
 }

@@ -1,0 +1,87 @@
+import { AccountStatus, AccountType, AuditAction, AuditEntityType, UserRole } from "@prisma/client";
+import { NextResponse } from "next/server";
+import { normalizeCompanyName } from "@/lib/accounts";
+import { getCurrentUser } from "@/lib/auth";
+import { logAudit } from "@/lib/audit";
+import { requireRole } from "@/lib/authz";
+import { prisma } from "@/lib/prisma";
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getCurrentUser(request);
+  const authzError = requireRole(user, [UserRole.ADMIN]);
+  if (authzError) return authzError;
+
+  const { id } = await params;
+  const before = await prisma.account.findUnique({ where: { id } });
+  if (!before) return NextResponse.json({ error: "account not found" }, { status: 404 });
+
+  const body = (await request.json()) as {
+    name?: string;
+    type?: AccountType;
+    state?: string;
+    district?: string;
+    status?: AccountStatus;
+  };
+
+  const data: {
+    name?: string;
+    normalized?: string;
+    type?: AccountType;
+    state?: string;
+    district?: string;
+    status?: AccountStatus;
+  } = {};
+
+  if (typeof body.name === "string" && body.name.trim()) {
+    data.name = body.name.trim();
+    data.normalized = normalizeCompanyName(body.name);
+  }
+  if (body.type && Object.values(AccountType).includes(body.type)) data.type = body.type;
+  if (typeof body.state === "string" && body.state.trim()) data.state = body.state.trim();
+  if (typeof body.district === "string" && body.district.trim()) data.district = body.district.trim();
+  if (body.status && Object.values(AccountStatus).includes(body.status)) data.status = body.status;
+
+  const updated = await prisma.account.update({
+    where: { id },
+    data,
+  });
+
+  await logAudit({
+    entityType: AuditEntityType.ACCOUNT,
+    entityId: updated.id,
+    action: AuditAction.UPDATE,
+    changedById: user!.id,
+    before,
+    after: updated,
+  });
+
+  return NextResponse.json(updated);
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getCurrentUser(request);
+  const authzError = requireRole(user, [UserRole.ADMIN]);
+  if (authzError) return authzError;
+
+  const { id } = await params;
+  const before = await prisma.account.findUnique({ where: { id } });
+  if (!before) return NextResponse.json({ error: "account not found" }, { status: 404 });
+
+  await prisma.account.delete({ where: { id } });
+  await logAudit({
+    entityType: AuditEntityType.ACCOUNT,
+    entityId: before.id,
+    action: AuditAction.DELETE,
+    changedById: user!.id,
+    before,
+    after: null,
+  });
+
+  return NextResponse.json({ ok: true });
+}
