@@ -389,12 +389,11 @@ export default function AccountsPage() {
                   Requested by: {account.requestedBy.name} ({account.requestedBy.role})
                 </p>
               ) : null}
-              {account.status === "APPROVED" ? (
-                <div className={`flex flex-wrap items-center gap-2 pt-2 ${isRep ? "opacity-60" : ""}`}>
+              {isAdmin && account.status === "APPROVED" ? (
+                <div className="flex flex-wrap items-center gap-2 pt-2">
                   <select
-                    className={`border rounded px-2 py-1 text-sm ${isRep ? "cursor-not-allowed" : ""}`}
+                    className="border rounded px-2 py-1 text-sm"
                     value={assignUserByAccount[account.id] ?? ""}
-                    disabled={isRep}
                     onChange={(e) =>
                       setAssignUserByAccount((prev) => ({
                         ...prev,
@@ -410,18 +409,12 @@ export default function AccountsPage() {
                     ))}
                   </select>
                   <button
-                    className={`rounded border px-3 py-1 text-sm ${isRep ? "cursor-not-allowed" : ""}`}
+                    className="rounded border px-3 py-1 text-sm"
                     type="button"
-                    disabled={isRep}
                     onClick={() => assign(account.id)}
                   >
                     Assign
                   </button>
-                  {isRep ? (
-                    <p className="text-xs text-gray-600 self-center">
-                      Only Admin/Manager can assign accounts
-                    </p>
-                  ) : null}
                 </div>
               ) : null}
             </div>
