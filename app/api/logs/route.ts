@@ -62,10 +62,6 @@ export async function POST(request: Request) {
       lastActivityAt: new Date(),
       nextStepType: bodyRecord.nextStepType as string,
       nextStepDate: new Date(bodyRecord.nextStepDate as string),
-      nextStepNote:
-        typeof bodyRecord.nextStepNote === "string" && bodyRecord.nextStepNote.trim()
-          ? bodyRecord.nextStepNote
-          : null,
       nextStepSource,
     },
   });

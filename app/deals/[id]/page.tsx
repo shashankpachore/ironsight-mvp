@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { formatInr } from "@/lib/currency";
+import { cookies } from "next/headers";
+import { UserRole } from "@prisma/client";
+import { DealValueEditor } from "@/components/deal-value-editor";
 import { getDealStage, getMissingSignals } from "@/lib/deals";
 import { NEXT_STEP_LABELS, type NextStepTypeValue } from "@/lib/next-step";
 import { prisma } from "@/lib/prisma";
+import { SESSION_COOKIE_NAME } from "@/lib/auth";
 
 export default async function DealDetailPage({
   params,
@@ -10,10 +13,19 @@ export default async function DealDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const cookieStore = await cookies();
+  const selectedUserId = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const currentUser = selectedUserId
+    ? await prisma.user.findUnique({
+        where: { id: selectedUserId },
+        select: { id: true, role: true },
+      })
+    : null;
   const deal = await prisma.deal.findUnique({
     where: { id },
     include: {
       account: true,
+      owner: { select: { id: true, managerId: true } },
       logs: {
         include: { risks: true },
         orderBy: { createdAt: "desc" },
@@ -26,6 +38,10 @@ export default async function DealDetailPage({
     getDealStage(id),
     getMissingSignals(id),
   ]);
+  const canEditValue =
+    currentUser?.role === UserRole.ADMIN ||
+    currentUser?.id === deal.ownerId ||
+    (currentUser?.role === UserRole.MANAGER && deal.owner.managerId === currentUser.id);
 
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
@@ -35,7 +51,11 @@ export default async function DealDetailPage({
       <section className="border rounded-lg p-4 space-y-1">
         <h1 className="text-2xl font-semibold">{deal.account.name}</h1>
         <p className="text-sm text-gray-700">Product: {deal.name}</p>
-        <p>Deal Value: {formatInr(deal.value)}</p>
+        <DealValueEditor
+          dealId={deal.id}
+          initialValue={deal.value}
+          canEdit={Boolean(canEditValue)}
+        />
         <p>Stage: {stage}</p>
         <p>Last activity: {deal.lastActivityAt.toLocaleString()}</p>
         <p>
@@ -48,7 +68,6 @@ export default async function DealDetailPage({
             {NEXT_STEP_LABELS[deal.nextStepType as NextStepTypeValue] ?? deal.nextStepType}
             {" · "}
             {deal.nextStepDate.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
-            {deal.nextStepNote ? ` · ${deal.nextStepNote}` : ""}
           </p>
         ) : null}
         <Link

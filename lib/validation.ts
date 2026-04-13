@@ -59,9 +59,6 @@ export function validateLogInput(input: unknown) {
   if (Number.isNaN(nextDate.getTime())) {
     return "invalid nextStepDate";
   }
-  if (body.nextStepNote !== undefined && typeof body.nextStepNote !== "string") {
-    return "nextStepNote must be a string";
-  }
   if (
     body.nextStepSource !== undefined &&
     body.nextStepSource !== "AUTO" &&

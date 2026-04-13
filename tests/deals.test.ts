@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { AccountStatus } from "@prisma/client";
+import { AccountStatus, AuditAction, AuditEntityType } from "@prisma/client";
 import { GET as getDealsRoute } from "../app/api/deals/route";
 import { GET as getDealByIdRoute } from "../app/api/deals/[id]/route";
+import { PATCH as patchDealByIdRoute } from "../app/api/deals/[id]/route";
 import { prisma } from "../lib/prisma";
 import { json, makeRequest, resetDbAndSeedUsers, createAccount, approveAccount, assignAccount, createDeal, uniqueName, getDeal } from "./helpers";
 
@@ -136,5 +137,137 @@ describe("deals api - integrity and misuse coverage", () => {
     const account = await prisma.account.findUnique({ where: { id: accountId } });
     expect(deal).toBeTruthy();
     expect(account?.status).toBe(AccountStatus.APPROVED);
+  });
+
+  it("rep can patch own deal value and audit is recorded", async () => {
+    const accountId = await prepAssignedAccount(users.rep.id);
+    const deal = await json<{ id: string }>(
+      await createDeal({ byUserId: users.rep.id, name: "Editable", value: 100, accountId }),
+    );
+
+    const res = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${deal.id}`, {
+        method: "PATCH",
+        userId: users.rep.id,
+        body: { value: 175 },
+      }),
+      { params: Promise.resolve({ id: deal.id }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{ value: number }>(res);
+    expect(body.value).toBe(175);
+
+    const audit = await prisma.auditLog.findFirst({
+      where: {
+        entityType: AuditEntityType.DEAL,
+        entityId: deal.id,
+        action: AuditAction.UPDATE,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit?.changedById).toBe(users.rep.id);
+    expect(audit?.before).toEqual({ value: 100 });
+    expect(audit?.after).toEqual({ value: 175 });
+  });
+
+  it("rep cannot patch another rep deal value", async () => {
+    const accountId = await prepAssignedAccount(users.rep2.id);
+    const deal = await json<{ id: string }>(
+      await createDeal({ byUserId: users.rep2.id, name: "PrivateValue", value: 120, accountId }),
+    );
+
+    const res = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${deal.id}`, {
+        method: "PATCH",
+        userId: users.rep.id,
+        body: { value: 180 },
+      }),
+      { params: Promise.resolve({ id: deal.id }) },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("manager can patch direct-report deal value but not unrelated rep deal", async () => {
+    const teamAccount = await prepAssignedAccount(users.rep.id);
+    const teamDeal = await json<{ id: string }>(
+      await createDeal({ byUserId: users.rep.id, name: "TeamDeal", value: 200, accountId: teamAccount }),
+    );
+    const otherAccount = await prepAssignedAccount(users.rep2.id);
+    const otherDeal = await json<{ id: string }>(
+      await createDeal({ byUserId: users.rep2.id, name: "OtherDeal", value: 210, accountId: otherAccount }),
+    );
+
+    const allowedRes = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${teamDeal.id}`, {
+        method: "PATCH",
+        userId: users.manager.id,
+        body: { value: 260 },
+      }),
+      { params: Promise.resolve({ id: teamDeal.id }) },
+    );
+    expect(allowedRes.status).toBe(200);
+
+    const deniedRes = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${otherDeal.id}`, {
+        method: "PATCH",
+        userId: users.manager.id,
+        body: { value: 260 },
+      }),
+      { params: Promise.resolve({ id: otherDeal.id }) },
+    );
+    expect(deniedRes.status).toBe(403);
+  });
+
+  it("admin can patch any deal value", async () => {
+    const accountId = await prepAssignedAccount(users.rep2.id);
+    const deal = await json<{ id: string }>(
+      await createDeal({ byUserId: users.rep2.id, name: "AdminEdit", value: 220, accountId }),
+    );
+    const res = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${deal.id}`, {
+        method: "PATCH",
+        userId: users.admin.id,
+        body: { value: 240 },
+      }),
+      { params: Promise.resolve({ id: deal.id }) },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("patch value validates required and positive number", async () => {
+    const accountId = await prepAssignedAccount(users.rep.id);
+    const deal = await json<{ id: string }>(
+      await createDeal({ byUserId: users.rep.id, name: "ValidateEdit", value: 130, accountId }),
+    );
+
+    const missingRes = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${deal.id}`, {
+        method: "PATCH",
+        userId: users.rep.id,
+        body: {},
+      }),
+      { params: Promise.resolve({ id: deal.id }) },
+    );
+    expect(missingRes.status).toBe(400);
+
+    const zeroRes = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${deal.id}`, {
+        method: "PATCH",
+        userId: users.rep.id,
+        body: { value: 0 },
+      }),
+      { params: Promise.resolve({ id: deal.id }) },
+    );
+    expect(zeroRes.status).toBe(400);
+
+    const negativeRes = await patchDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${deal.id}`, {
+        method: "PATCH",
+        userId: users.rep.id,
+        body: { value: -5 },
+      }),
+      { params: Promise.resolve({ id: deal.id }) },
+    );
+    expect(negativeRes.status).toBe(400);
   });
 });

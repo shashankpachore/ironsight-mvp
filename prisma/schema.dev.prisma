@@ -1,14 +1,10 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/dev-client"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -92,37 +88,37 @@ enum RiskCategory {
 }
 
 model User {
-  id                String    @id @default(cuid())
+  id                String      @id @default(cuid())
   name              String
-  email             String    @unique
+  email             String      @unique
   password          String
   role              UserRole
   managerId         String?
-  manager           User?     @relation("ManagerReports", fields: [managerId], references: [id])
-  reports           User[]    @relation("ManagerReports")
+  manager           User?       @relation("ManagerReports", fields: [managerId], references: [id])
+  reports           User[]      @relation("ManagerReports")
   deals             Deal[]
-  createdAccounts   Account[] @relation("CreatedAccounts")
-  assignedAccounts  Account[] @relation("AssignedAccounts")
-  requestedAccounts Account[] @relation("AccountRequestedBy")
-  auditLogsChanged  AuditLog[] @relation("ChangedByUser")
+  createdAccounts   Account[]   @relation("CreatedAccounts")
+  assignedAccounts  Account[]   @relation("AssignedAccounts")
+  requestedAccounts Account[]   @relation("AccountRequestedBy")
+  auditLogsChanged  AuditLog[]  @relation("ChangedByUser")
 }
 
 model Account {
-  id           String        @id @default(cuid())
-  name         String
-  normalized   String        @unique
-  type         AccountType   @default(SCHOOL)
-  state        String        @default("UNKNOWN")
-  district     String        @default("UNKNOWN")
-  createdById    String
-  requestedById  String?
-  assignedToId   String?
-  status         AccountStatus @default(PENDING)
-  createdAt      DateTime      @default(now())
-  createdBy      User          @relation("CreatedAccounts", fields: [createdById], references: [id])
-  requestedBy    User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
-  assignedTo     User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id])
-  deals          Deal[]
+  id            String        @id @default(cuid())
+  name          String
+  normalized    String        @unique
+  type          AccountType   @default(SCHOOL)
+  state         String        @default("UNKNOWN")
+  district      String        @default("UNKNOWN")
+  createdById   String
+  requestedById String?
+  assignedToId  String?
+  status        AccountStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  createdBy     User          @relation("CreatedAccounts", fields: [createdById], references: [id])
+  requestedBy   User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  assignedTo    User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id], onDelete: SetNull)
+  deals         Deal[]
 }
 
 model Deal {
@@ -155,9 +151,9 @@ model InteractionLog {
 }
 
 model InteractionRisk {
-  id       String       @id @default(cuid())
+  id       String          @id @default(cuid())
   logId    String
-  log      InteractionLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  log      InteractionLog  @relation(fields: [logId], references: [id], onDelete: Cascade)
   category RiskCategory
 }
 

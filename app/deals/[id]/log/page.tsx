@@ -5,17 +5,24 @@ import { FormEvent, useState } from "react";
 import { useTestSession } from "@/components/test-session-bar";
 import {
   INTERACTION_TYPES,
+  OUTCOME_GROUPS,
+  OUTCOME_LABELS,
   OUTCOMES,
-  RISK_CATEGORIES,
+  type RiskCategoryValue,
+  RISK_GROUPS,
+  RISK_LABELS,
   STAKEHOLDER_TYPES,
 } from "@/lib/domain";
 import { istYmdToUtcStart } from "@/lib/ist-time";
 import {
-  getDefaultNextStepDateYmd,
-  getSuggestedNextStep,
   NEXT_STEP_OPTIONS,
   type NextStepTypeValue,
 } from "@/lib/next-step";
+import {
+  getSuggestedNextStepDate,
+  getSuggestedNextStepType,
+  RISK_SUGGESTIONS,
+} from "@/lib/suggestions";
 
 export default function LogInteractionPage({
   params,
@@ -28,30 +35,46 @@ export default function LogInteractionPage({
     (typeof INTERACTION_TYPES)[number]
   >(INTERACTION_TYPES[0]);
   const [outcome, setOutcome] = useState<(typeof OUTCOMES)[number]>(OUTCOMES[0]);
-  const initialSuggest = getSuggestedNextStep(OUTCOMES[0]);
-  const [nextStepType, setNextStepType] = useState<NextStepTypeValue>(initialSuggest.type);
-  const [nextStepDateYmd, setNextStepDateYmd] = useState(() =>
-    getDefaultNextStepDateYmd(initialSuggest.defaultDays),
+  const initialNextStep = getSuggestedNextStepType(OUTCOMES[0]);
+  const [nextStepType, setNextStepType] = useState<NextStepTypeValue | "">(
+    initialNextStep ?? "",
   );
-  const [nextStepNote, setNextStepNote] = useState("");
-  const [nextStepManual, setNextStepManual] = useState(false);
+  const [nextStepDateYmd, setNextStepDateYmd] = useState(() =>
+    getSuggestedNextStepDate(OUTCOMES[0]),
+  );
+  const [nextStepManuallyChanged, setNextStepManuallyChanged] = useState(false);
   const [stakeholderType, setStakeholderType] = useState<
     (typeof STAKEHOLDER_TYPES)[number]
   >(STAKEHOLDER_TYPES[0]);
-  const [risks, setRisks] = useState<string[]>([]);
+  const [risks, setRisks] = useState<RiskCategoryValue[]>([]);
+  const [risksManuallyChanged, setRisksManuallyChanged] = useState(false);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  function applyOutcomeSuggestion(nextOutcome: string) {
-    const s = getSuggestedNextStep(nextOutcome);
-    setNextStepType(s.type);
-    setNextStepDateYmd(getDefaultNextStepDateYmd(s.defaultDays));
-    setNextStepManual(false);
+  function applyOutcomeSuggestion(nextOutcome: (typeof OUTCOMES)[number]) {
+    if (nextOutcome === "PO_RECEIVED") {
+      setNextStepType("");
+      setNextStepDateYmd("");
+      return;
+    }
+
+    if (!nextStepManuallyChanged) {
+      setNextStepType(getSuggestedNextStepType(nextOutcome) ?? "");
+      setNextStepDateYmd(getSuggestedNextStepDate(nextOutcome));
+    }
+
+    if (!risksManuallyChanged) {
+      setRisks(RISK_SUGGESTIONS[nextOutcome] ?? []);
+    }
   }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!canSubmit) {
+      setError("Please complete required next step fields and select at least one risk.");
+      return;
+    }
     setSaving(true);
     setError("");
     const { id } = await params;
@@ -69,10 +92,9 @@ export default function LogInteractionPage({
         stakeholderType,
         risks,
         notes: notes || undefined,
-        nextStepType,
+        nextStepType: nextStepType || undefined,
         nextStepDate: istYmdToUtcStart(nextStepDateYmd).toISOString(),
-        nextStepNote: nextStepNote.trim() || undefined,
-        nextStepSource: nextStepManual ? "MANUAL" : "AUTO",
+        nextStepSource: nextStepManuallyChanged ? "MANUAL" : "AUTO",
       }),
     });
 
@@ -87,7 +109,8 @@ export default function LogInteractionPage({
     router.refresh();
   }
 
-  function toggleRisk(value: string) {
+  function toggleRisk(value: RiskCategoryValue) {
+    setRisksManuallyChanged(true);
     setRisks((prev) => {
       if (prev.includes(value)) return prev.filter((x) => x !== value);
       if (prev.length >= 3) return prev;
@@ -127,58 +150,16 @@ export default function LogInteractionPage({
               applyOutcomeSuggestion(v);
             }}
           >
-            {OUTCOMES.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
+            {OUTCOME_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.values.map((value) => (
+                  <option key={value} value={value}>
+                    {OUTCOME_LABELS[value]}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
-        </div>
-        <div className="border rounded p-3 space-y-3 bg-gray-50">
-          <p className="text-sm font-medium">Next step (required)</p>
-          <div>
-            <label className="block text-sm mb-1">Next step</label>
-            <select
-              className="w-full border rounded px-3 py-2 bg-white"
-              value={nextStepType}
-              onChange={(e) => {
-                setNextStepType(e.target.value as NextStepTypeValue);
-                setNextStepManual(true);
-              }}
-            >
-              {NEXT_STEP_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Date</label>
-            <input
-              type="date"
-              className="w-full border rounded px-3 py-2 bg-white"
-              value={nextStepDateYmd}
-              required
-              onChange={(e) => {
-                setNextStepDateYmd(e.target.value);
-                setNextStepManual(true);
-              }}
-            />
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Note (optional)</label>
-            <input
-              type="text"
-              className="w-full border rounded px-3 py-2 bg-white"
-              value={nextStepNote}
-              onChange={(e) => {
-                setNextStepNote(e.target.value);
-                setNextStepManual(true);
-              }}
-              placeholder="Optional"
-            />
-          </div>
         </div>
         <div>
           <label className="block text-sm mb-1">Stakeholder</label>
@@ -198,17 +179,64 @@ export default function LogInteractionPage({
         </div>
         <div>
           <p className="block text-sm mb-1">Risks (min 1, max 3)</p>
-          <div className="grid md:grid-cols-2 gap-2">
-            {RISK_CATEGORIES.map((risk) => (
-              <label key={risk} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={risks.includes(risk)}
-                  onChange={() => toggleRisk(risk)}
-                />
-                {risk}
-              </label>
+          <div className="space-y-3">
+            {RISK_GROUPS.map((group) => (
+              <div key={group.label} className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-600">
+                  {group.label}
+                </p>
+                <div className="grid md:grid-cols-2 gap-2">
+                  {group.values.map((risk) => (
+                    <label key={risk} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={risks.includes(risk)}
+                        onChange={() => toggleRisk(risk)}
+                      />
+                      {RISK_LABELS[risk]}
+                    </label>
+                  ))}
+                </div>
+              </div>
             ))}
+          </div>
+          <p className="mt-2 text-xs text-gray-500">Suggested based on outcome</p>
+        </div>
+        <div className="border rounded p-3 space-y-3 bg-gray-50">
+          <p className="text-sm font-medium">Next step (required)</p>
+          <p className="text-xs text-gray-500">Suggested based on outcome</p>
+          <div>
+            <label className="block text-sm mb-1">Next step</label>
+            <select
+              className="w-full border rounded px-3 py-2 bg-white"
+              value={nextStepType}
+              disabled={outcome === "PO_RECEIVED"}
+              onChange={(e) => {
+                setNextStepType(e.target.value as NextStepTypeValue | "");
+                setNextStepManuallyChanged(true);
+              }}
+            >
+              <option value="">Select next step</option>
+              {NEXT_STEP_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Date</label>
+            <input
+              type="date"
+              className="w-full border rounded px-3 py-2 bg-white"
+              value={nextStepDateYmd}
+              disabled={outcome === "PO_RECEIVED"}
+              required
+              onChange={(e) => {
+                setNextStepDateYmd(e.target.value);
+                setNextStepManuallyChanged(true);
+              }}
+            />
           </div>
         </div>
         <div>

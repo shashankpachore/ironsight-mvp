@@ -1,4 +1,5 @@
 import { AccountStatus, AccountType, AuditAction, AuditEntityType } from "@prisma/client";
+import type { Account } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { normalizeCompanyName } from "@/lib/accounts";
 import { getCurrentUser } from "@/lib/auth";
@@ -94,7 +95,7 @@ export async function POST(request: Request) {
   const normalizeds = parsed
     .filter((row) => row.normalized.length > 0)
     .map((row) => row.normalized);
-  const existing = normalizeds.length
+  const existing: Array<{ normalized: string }> = normalizeds.length
     ? await prisma.account.findMany({
       where: { normalized: { in: normalizeds } },
       select: { normalized: true },
@@ -125,7 +126,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const created = await prisma.$transaction(
+  const created: Account[] = await prisma.$transaction(
     validRows.map((row) =>
       prisma.account.create({
         data: {
@@ -144,7 +145,7 @@ export async function POST(request: Request) {
   );
 
   await Promise.all(
-    created.map((account) =>
+    created.map((account: Account) =>
       logAudit({
         entityType: AuditEntityType.ACCOUNT,
         entityId: account.id,

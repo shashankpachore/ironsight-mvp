@@ -47,7 +47,7 @@ describe("mandatory next step — POST /api/logs", () => {
     dealId = (await json<{ id: string }>(dealRes)).id;
     await prisma.deal.update({
       where: { id: dealId },
-      data: { nextStepType: null, nextStepDate: null, nextStepNote: null, nextStepSource: null },
+      data: { nextStepType: null, nextStepDate: null, nextStepSource: null },
     });
   });
 

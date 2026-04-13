@@ -48,16 +48,19 @@ export async function getActivityComplianceRows(params: {
     },
   });
 
-  const lastByOwner = new Map<string, Date>();
-  const lastRows = await prisma.$queryRaw<{ ownerId: string; lastAt: Date }[]>`
-    SELECT d."ownerId" AS "ownerId", MAX(l."createdAt") AS "lastAt"
-    FROM "InteractionLog" l
-    INNER JOIN "Deal" d ON d.id = l."dealId"
-    WHERE d."ownerId" IN (${Prisma.join(repIds)})
-    GROUP BY d."ownerId"
-  `;
-  for (const row of lastRows) {
-    lastByOwner.set(row.ownerId, row.lastAt);
+  const lastByOwner = new Map<string, Date | null>();
+  const allLogsDesc = await prisma.interactionLog.findMany({
+    where: { deal: { ownerId: { in: repIds } } },
+    select: {
+      createdAt: true,
+      deal: { select: { ownerId: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  for (const log of allLogsDesc) {
+    if (!lastByOwner.has(log.deal.ownerId)) {
+      lastByOwner.set(log.deal.ownerId, log.createdAt);
+    }
   }
 
   const yesterdayCountByOwner = new Map<string, number>();

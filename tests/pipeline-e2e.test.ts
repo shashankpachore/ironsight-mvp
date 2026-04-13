@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Outcome, StakeholderType } from "@prisma/client";
 import { GET as pipelineGET } from "../app/api/pipeline/route";
+import { GET as managerBreakdownGET } from "../app/api/pipeline/manager-breakdown/route";
 import { createAccount, approveAccount, assignAccount, createDeal, json, logInteraction, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { prisma } from "../lib/prisma";
@@ -81,5 +82,49 @@ describe("pipeline e2e", () => {
     const repBody = await json<Record<string, { count: number }>>(repRes);
     const repTotal = Object.values(repBody).reduce((sum, row) => sum + row.count, 0);
     expect(repTotal).toBe(1);
+  });
+
+  it("admin gets manager-level pipeline breakdown", async () => {
+    await prisma.user.update({ where: { id: users.rep.id }, data: { managerId: users.manager.id } });
+    await prisma.user.update({ where: { id: users.rep2.id }, data: { managerId: users.manager.id } });
+
+    const res = await managerBreakdownGET(
+      makeRequest("http://localhost/api/pipeline/manager-breakdown", { userId: users.admin.id }),
+    );
+    const body = await json<
+      Array<{
+        managerId: string;
+        managerName: string;
+        stages: Record<string, number>;
+        totalValue: number;
+      }>
+    >(res);
+
+    expect(res.status).toBe(200);
+    const managerRow = body.find((row) => row.managerId === users.manager.id);
+    expect(managerRow).toBeTruthy();
+    const totalCount = managerRow
+      ? Object.values(managerRow.stages).reduce((sum, count) => sum + count, 0)
+      : 0;
+    expect(totalCount).toBe(2);
+    expect(managerRow?.totalValue).toBe(300);
+  });
+
+  it("manager breakdown endpoint denies non-admin users", async () => {
+    const repRes = await managerBreakdownGET(
+      makeRequest("http://localhost/api/pipeline/manager-breakdown", { userId: users.rep.id }),
+    );
+    const managerRes = await managerBreakdownGET(
+      makeRequest("http://localhost/api/pipeline/manager-breakdown", { userId: users.manager.id }),
+    );
+    expect(repRes.status).toBe(403);
+    expect(managerRes.status).toBe(403);
+  });
+
+  it("manager breakdown endpoint requires authentication", async () => {
+    const res = await managerBreakdownGET(
+      makeRequest("http://localhost/api/pipeline/manager-breakdown"),
+    );
+    expect(res.status).toBe(401);
   });
 });

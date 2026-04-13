@@ -25,7 +25,7 @@ export function parseCookieValue(request: Request, key: string) {
 }
 
 export async function getCurrentUser(request: Request) {
-  if (process.env.NODE_ENV === "test") {
+  if (process.env.TEST_MODE === "true") {
     const headerUserId = request.headers.get("x-user-id");
     if (headerUserId) {
       const headerUser = await prisma.user.findUnique({ where: { id: headerUserId } });

@@ -21,6 +21,19 @@ type ManagerRepPipeline = {
   pipeline: PipelineTotals;
 };
 
+type ManagerBreakdownRow = {
+  managerId: string;
+  managerName: string;
+  stages: {
+    ACCESS: number;
+    QUALIFIED: number;
+    EVALUATION: number;
+    COMMITTED: number;
+    CLOSED: number;
+  };
+  totalValue: number;
+};
+
 type PipelineResponse = PipelineTotals | {
   totals: PipelineTotals;
   repPipelines: ManagerRepPipeline[];
@@ -30,6 +43,7 @@ export default function PipelinePage() {
   const { header, currentUser } = useTestSession();
   const [data, setData] = useState<PipelineTotals | null>(null);
   const [repPipelines, setRepPipelines] = useState<ManagerRepPipeline[]>([]);
+  const [managerBreakdown, setManagerBreakdown] = useState<ManagerBreakdownRow[]>([]);
   const [error, setError] = useState("");
 
   async function loadPipeline() {
@@ -44,10 +58,23 @@ export default function PipelinePage() {
       const typed = body as { totals: PipelineTotals; repPipelines: ManagerRepPipeline[] };
       setData(typed.totals);
       setRepPipelines(typed.repPipelines ?? []);
+      setManagerBreakdown([]);
       return;
     }
     setData(body as PipelineTotals);
     setRepPipelines([]);
+
+    if (currentUser?.role === "ADMIN") {
+      const managerRes = await fetch("/api/pipeline/manager-breakdown", { headers: header });
+      const managerBody = await managerRes.json();
+      if (!managerRes.ok) {
+        setError(managerBody.error || "Failed to load manager breakdown");
+        return;
+      }
+      setManagerBreakdown(managerBody as ManagerBreakdownRow[]);
+      return;
+    }
+    setManagerBreakdown([]);
   }
 
   function renderSection(title: string, stages: Array<keyof PipelineTotals>, source: PipelineTotals) {
@@ -95,6 +122,41 @@ export default function PipelinePage() {
           {renderSection("Early Funnel", ["ACCESS", "QUALIFIED"], data)}
           {renderSection("Mid", ["EVALUATION", "COMMITTED"], data)}
           {renderSection("Closed", ["CLOSED"], data)}
+
+          {currentUser?.role === "ADMIN" ? (
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Pipeline by Manager</h2>
+              <table className="w-full border-collapse border text-sm">
+                <thead>
+                  <tr>
+                    <th className="border p-2 text-left">Manager Name</th>
+                    <th className="border p-2 text-left">ACCESS</th>
+                    <th className="border p-2 text-left">QUALIFIED</th>
+                    <th className="border p-2 text-left">EVALUATION</th>
+                    <th className="border p-2 text-left">COMMITTED</th>
+                    <th className="border p-2 text-left">CLOSED</th>
+                    <th className="border p-2 text-left">Total Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {managerBreakdown.map((row) => (
+                    <tr key={row.managerId}>
+                      <td className="border p-2">{row.managerName}</td>
+                      <td className="border p-2">{row.stages.ACCESS}</td>
+                      <td className="border p-2">{row.stages.QUALIFIED}</td>
+                      <td className="border p-2">{row.stages.EVALUATION}</td>
+                      <td className="border p-2">{row.stages.COMMITTED}</td>
+                      <td className="border p-2">{row.stages.CLOSED}</td>
+                      <td className="border p-2">{formatInr(row.totalValue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {managerBreakdown.length === 0 ? (
+                <p className="text-sm text-gray-600">No manager-owned rep pipeline found.</p>
+              ) : null}
+            </section>
+          ) : null}
 
           {currentUser?.role === "MANAGER" ? (
             <section className="space-y-3">
