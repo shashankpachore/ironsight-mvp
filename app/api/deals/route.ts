@@ -55,10 +55,17 @@ export async function GET(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
 
-  const where =
-    user.role === UserRole.REP
-      ? { account: { assignedToId: user.id } }
-      : {};
+  let where = {};
+  if (user.role === UserRole.REP) {
+    where = { account: { assignedToId: user.id } };
+  } else if (user.role === UserRole.MANAGER) {
+    const reports = await prisma.user.findMany({
+      where: { managerId: user.id, role: UserRole.REP },
+      select: { id: true },
+    });
+    const assigneeIds = [user.id, ...reports.map((report) => report.id)];
+    where = { account: { assignedToId: { in: assigneeIds } } };
+  }
 
   const deals = await prisma.deal.findMany({
     where,

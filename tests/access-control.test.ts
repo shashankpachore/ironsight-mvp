@@ -136,10 +136,11 @@ describe("access control - critical permission boundaries", () => {
     expect(res.status).toBe(200);
   });
 
-  it("manager can access both reps deals list", async () => {
+  it("manager sees own team deals list only", async () => {
     const res = await getDealsRoute(makeRequest("http://localhost/api/deals", { userId: users.manager.id }));
-    const body = await json<unknown[]>(res);
-    expect(body.length).toBe(2);
+    const body = await json<Array<{ id: string }>>(res);
+    expect(body.map((d) => d.id)).toContain(repDealId);
+    expect(body.map((d) => d.id)).not.toContain(rep2DealId);
   });
 
   it("rep sees restricted deals list", async () => {
