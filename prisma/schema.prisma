@@ -8,7 +8,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -103,6 +103,7 @@ model User {
   deals             Deal[]
   createdAccounts   Account[] @relation("CreatedAccounts")
   assignedAccounts  Account[] @relation("AssignedAccounts")
+  requestedAccounts Account[] @relation("AccountRequestedBy")
   auditLogsChanged  AuditLog[] @relation("ChangedByUser")
 }
 
@@ -113,13 +114,15 @@ model Account {
   type         AccountType   @default(SCHOOL)
   state        String        @default("UNKNOWN")
   district     String        @default("UNKNOWN")
-  createdById  String
-  assignedToId String?
-  status       AccountStatus @default(PENDING)
-  createdAt    DateTime      @default(now())
-  createdBy    User          @relation("CreatedAccounts", fields: [createdById], references: [id])
-  assignedTo   User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id])
-  deals        Deal[]
+  createdById    String
+  requestedById  String?
+  assignedToId   String?
+  status         AccountStatus @default(PENDING)
+  createdAt      DateTime      @default(now())
+  createdBy      User          @relation("CreatedAccounts", fields: [createdById], references: [id])
+  requestedBy    User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  assignedTo     User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id])
+  deals          Deal[]
 }
 
 model Deal {
@@ -133,6 +136,10 @@ model Deal {
   account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdAt      DateTime         @default(now())
   lastActivityAt DateTime         @default(now())
+  nextStepType   String?
+  nextStepDate   DateTime?
+  nextStepNote   String?
+  nextStepSource String?
   logs           InteractionLog[]
 }
 

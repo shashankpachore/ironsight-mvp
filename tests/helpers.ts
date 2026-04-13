@@ -6,6 +6,7 @@ import { POST as approveAccountRoute } from "../app/api/accounts/[id]/approve/ro
 import { POST as assignAccountRoute } from "../app/api/accounts/[id]/assign/route";
 import { POST as createDealRoute } from "../app/api/deals/route";
 import { POST as logInteractionRoute } from "../app/api/logs/route";
+import { defaultNextStepRequestFields } from "../lib/next-step";
 
 export type SeededUsers = {
   admin: { id: string; email: string; role: UserRole };
@@ -95,12 +96,20 @@ export async function json<T = unknown>(response: Response): Promise<T> {
 export async function createAccount(params: {
   byUserId: string;
   name: string;
+  type?: "SCHOOL" | "PARTNER";
+  district?: string;
+  state?: string;
 }) {
   const res = await requestAccountRoute(
     makeRequest("http://localhost/api/accounts/request", {
       method: "POST",
       userId: params.byUserId,
-      body: { name: params.name },
+      body: {
+        name: params.name,
+        type: params.type ?? "SCHOOL",
+        district: params.district ?? "Mumbai",
+        state: params.state ?? "Maharashtra",
+      },
     }),
   );
   return res;
@@ -153,6 +162,7 @@ export async function logInteraction(params: {
   risks?: RiskCategory[];
   notes?: string;
 }) {
+  const outcome = params.outcome ?? Outcome.FOLLOW_UP_DONE;
   return logInteractionRoute(
     makeRequest("http://localhost/api/logs", {
       method: "POST",
@@ -160,10 +170,11 @@ export async function logInteraction(params: {
       body: {
         dealId: params.dealId,
         interactionType: params.interactionType ?? InteractionType.CALL,
-        outcome: params.outcome ?? Outcome.FOLLOW_UP_DONE,
+        outcome,
         stakeholderType: params.stakeholderType ?? StakeholderType.UNKNOWN,
         risks: params.risks ?? [RiskCategory.NO_ACCESS_TO_DM],
         notes: params.notes ?? "test",
+        ...defaultNextStepRequestFields(outcome),
       },
     }),
   );

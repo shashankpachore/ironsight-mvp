@@ -4,7 +4,6 @@ import { CreateDealForm } from "@/components/create-deal-form";
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { formatInr } from "@/lib/currency";
 import { sortDealsByDisplayOrder } from "@/lib/deal-order";
-import { canViewAdminSections } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
 type DealItem = {
@@ -26,7 +25,7 @@ export default async function Home() {
       select: { role: true },
     })
     : null;
-  const showAdminNav = canViewAdminSections(sessionUser?.role);
+  void sessionUser;
 
   const incomingHeaders = await headers();
   const host = incomingHeaders.get("host");
@@ -63,30 +62,6 @@ export default async function Home() {
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
       <h1 className="text-2xl font-semibold">Ironsight - Deal Tracker</h1>
-      <div className="flex gap-4 text-sm">
-        <Link href="/accounts" className="underline">
-          Accounts
-        </Link>
-        <Link href="/pipeline" className="underline">
-          Pipeline
-        </Link>
-        {showAdminNav ? (
-          <>
-            <Link href="/users" className="underline">
-              Users
-            </Link>
-            <Link href="/audit" className="underline">
-              Audit
-            </Link>
-            <Link href="/activity" className="underline">
-              Activity
-            </Link>
-          </>
-        ) : null}
-        <a href="/api/export" className="underline">
-          Export Data
-        </a>
-      </div>
 
       <section className="border rounded-lg p-4">
         <h2 className="font-medium mb-3">Create Deal</h2>

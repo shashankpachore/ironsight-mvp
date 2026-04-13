@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as getAccountsRoute } from "../app/api/accounts/route";
 import { GET as getPendingAccountsRoute } from "../app/api/accounts/pending/route";
 import { GET as getDealsRoute } from "../app/api/deals/route";
@@ -8,7 +8,31 @@ import { GET as getDealMissingRoute } from "../app/api/deals/[id]/missing-signal
 import { GET as getDealLogsRoute } from "../app/api/logs/[dealId]/route";
 import { POST as approveRoute } from "../app/api/accounts/[id]/approve/route";
 import { POST as assignRoute } from "../app/api/accounts/[id]/assign/route";
+import { SESSION_COOKIE_NAME } from "../lib/auth";
 import { json, makeRequest, resetDbAndSeedUsers, createAccount, approveAccount, assignAccount, createDeal, uniqueName } from "./helpers";
+
+const pageTestCookie = vi.hoisted(() => {
+  let userId: string | undefined;
+  return {
+    setSessionUserId(id: string | undefined) {
+      userId = id;
+    },
+    getCookies: async () => ({
+      get: (name: string) =>
+        name === SESSION_COOKIE_NAME && userId ? { value: userId } : undefined,
+    }),
+  };
+});
+
+vi.mock("next/headers", () => ({
+  cookies: () => pageTestCookie.getCookies(),
+}));
+
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  },
+}));
 
 describe("access control - critical permission boundaries", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;
@@ -163,8 +187,86 @@ describe("access control - critical permission boundaries", () => {
     expect(usersRes.status).toBe(401);
   });
 
+  it("rep gets 403 on GET /api/users", async () => {
+    const { GET: getUsersRoute } = await import("../app/api/users/route");
+    const res = await getUsersRoute(makeRequest("http://localhost/api/users", { userId: users.rep.id }));
+    expect(res.status).toBe(403);
+  });
+
+  it("rep gets 403 on GET /api/audit", async () => {
+    const { GET: getAuditRoute } = await import("../app/api/audit/route");
+    const res = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.rep.id }));
+    expect(res.status).toBe(403);
+  });
+
+  it("manager can GET /api/users (200)", async () => {
+    const { GET: getUsersRoute } = await import("../app/api/users/route");
+    const res = await getUsersRoute(makeRequest("http://localhost/api/users", { userId: users.manager.id }));
+    expect(res.status).toBe(200);
+  });
+
+  it("manager can GET /api/audit (200)", async () => {
+    const { GET: getAuditRoute } = await import("../app/api/audit/route");
+    const res = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.manager.id }));
+    expect(res.status).toBe(200);
+  });
+
+  it("admin can GET /api/users and /api/audit (200)", async () => {
+    const { GET: getUsersRoute } = await import("../app/api/users/route");
+    const { GET: getAuditRoute } = await import("../app/api/audit/route");
+    const usersRes = await getUsersRoute(makeRequest("http://localhost/api/users", { userId: users.admin.id }));
+    const auditRes = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.admin.id }));
+    expect(usersRes.status).toBe(200);
+    expect(auditRes.status).toBe(200);
+  });
+
+  it("manager cannot perform admin-only POST /api/users", async () => {
+    const { POST: postUsersRoute } = await import("../app/api/users/route");
+    const res = await postUsersRoute(
+      makeRequest("http://localhost/api/users", {
+        method: "POST",
+        userId: users.manager.id,
+        body: {
+          name: "New Rep",
+          email: "newrep@ironsight.local",
+          password: "test1234",
+          role: "REP",
+          managerId: users.manager.id,
+        },
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
   it("accounts includeAll is forbidden for rep", async () => {
     const res = await getAccountsRoute(makeRequest("http://localhost/api/accounts?includeAll=1", { userId: users.rep.id }));
     expect(res.status).toBe(403);
+  });
+});
+
+describe("access control - admin section pages (REP redirect)", () => {
+  let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;
+
+  beforeEach(async () => {
+    users = await resetDbAndSeedUsers();
+  });
+
+  it("REP /users redirects to home", async () => {
+    pageTestCookie.setSessionUserId(users.rep.id);
+    const { default: UsersPage } = await import("../app/users/page");
+    await expect(UsersPage()).rejects.toThrow(/^REDIRECT:\/$/);
+  });
+
+  it("REP /audit redirects to home", async () => {
+    pageTestCookie.setSessionUserId(users.rep.id);
+    const { default: AuditPage } = await import("../app/audit/page");
+    await expect(AuditPage()).rejects.toThrow(/^REDIRECT:\/$/);
+  });
+
+  it("MANAGER /users does not redirect", async () => {
+    pageTestCookie.setSessionUserId(users.manager.id);
+    const { default: UsersPage } = await import("../app/users/page");
+    const el = await UsersPage();
+    expect(el).toBeTruthy();
   });
 });

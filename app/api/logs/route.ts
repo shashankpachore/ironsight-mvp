@@ -52,9 +52,22 @@ export async function POST(request: Request) {
     include: { risks: true },
   });
 
+  const bodyRecord = body as Record<string, unknown>;
+  const nextStepSource =
+    bodyRecord.nextStepSource === "MANUAL" ? "MANUAL" : "AUTO";
+
   await prisma.deal.update({
     where: { id: body.dealId },
-    data: { lastActivityAt: new Date() },
+    data: {
+      lastActivityAt: new Date(),
+      nextStepType: bodyRecord.nextStepType as string,
+      nextStepDate: new Date(bodyRecord.nextStepDate as string),
+      nextStepNote:
+        typeof bodyRecord.nextStepNote === "string" && bodyRecord.nextStepNote.trim()
+          ? bodyRecord.nextStepNote
+          : null,
+      nextStepSource,
+    },
   });
 
   return NextResponse.json(log, { status: 201 });

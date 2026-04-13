@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { cookies } from "next/headers";
+import { AppNav } from "@/components/app-nav";
 import { TestSessionBar, TestSessionProvider } from "@/components/test-session-bar";
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -43,6 +44,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <TestSessionProvider initialCurrentUser={currentUser}>
           <TestSessionBar />
+          <AppNav role={currentUser?.role} />
           {children}
         </TestSessionProvider>
       </body>

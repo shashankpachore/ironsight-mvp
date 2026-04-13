@@ -4,6 +4,7 @@ import { GET as getAccountsRoute } from "../app/api/accounts/route";
 import { GET as getPendingRoute } from "../app/api/accounts/pending/route";
 import { POST as approveAccountRoute } from "../app/api/accounts/[id]/approve/route";
 import { POST as rejectAccountRoute } from "../app/api/accounts/[id]/reject/route";
+import { POST as requestAccountRoute } from "../app/api/accounts/request/route";
 import { json, createAccount, approveAccount, assignAccount, makeRequest, resetDbAndSeedUsers, uniqueName, getAccount } from "./helpers";
 
 describe("accounts api - adversarial + permissions", () => {
@@ -15,9 +16,39 @@ describe("accounts api - adversarial + permissions", () => {
 
   it("request account creates PENDING status", async () => {
     const res = await createAccount({ byUserId: users.rep.id, name: uniqueName("Acme") });
-    const body = await json<{ status: AccountStatus }>(res);
+    const body = await json<{ status: AccountStatus; state: string; district: string; type: string }>(res);
     expect(res.status).toBe(201);
     expect(body.status).toBe(AccountStatus.PENDING);
+    expect(body.state).toBe("Maharashtra");
+    expect(body.district).toBe("Mumbai");
+    expect(body.type).toBe("SCHOOL");
+  });
+
+  it("request rejects missing type", async () => {
+    const res = await requestAccountRoute(
+      makeRequest("http://localhost/api/accounts/request", {
+        method: "POST",
+        userId: users.rep.id,
+        body: { name: uniqueName("NoType"), district: "D", state: "Maharashtra" },
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("request rejects invalid state", async () => {
+    const res = await requestAccountRoute(
+      makeRequest("http://localhost/api/accounts/request", {
+        method: "POST",
+        userId: users.rep.id,
+        body: {
+          type: "SCHOOL",
+          name: uniqueName("BadState"),
+          district: "D",
+          state: "NotARealState",
+        },
+      }),
+    );
+    expect(res.status).toBe(400);
   });
 
   it("admin can approve account", async () => {
@@ -120,18 +151,22 @@ describe("accounts api - adversarial + permissions", () => {
     expect(res.status).toBe(404);
   });
 
-  it("rep sees only assigned approved accounts", async () => {
+  it("rep sees assigned accounts and own pending requests, not other reps' assignments", async () => {
     const a1 = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("RepViewYes") }));
     await approveAccount({ byUserId: users.admin.id, accountId: a1.id });
     await assignAccount({ byUserId: users.admin.id, accountId: a1.id, assigneeId: users.rep.id });
-    const a2 = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("RepViewNo") }));
+    const a2 = await json<{ id: string }>(
+      await createAccount({ byUserId: users.rep2.id, name: uniqueName("RepViewNo") }),
+    );
     await approveAccount({ byUserId: users.admin.id, accountId: a2.id });
     await assignAccount({ byUserId: users.admin.id, accountId: a2.id, assigneeId: users.rep2.id });
+    const a3 = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("RepPendingOwn") }));
 
     const res = await getAccountsRoute(makeRequest("http://localhost/api/accounts", { userId: users.rep.id }));
     const list = await json<Array<{ id: string }>>(res);
     expect(res.status).toBe(200);
     expect(list.map((x) => x.id)).toContain(a1.id);
+    expect(list.map((x) => x.id)).toContain(a3.id);
     expect(list.map((x) => x.id)).not.toContain(a2.id);
   });
 

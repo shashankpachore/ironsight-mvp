@@ -136,6 +136,7 @@ export async function POST(request: Request) {
           district: row.district,
           status: AccountStatus.PENDING,
           createdById: user.id,
+          requestedById: user.id,
           assignedToId: user.id,
         },
       }),

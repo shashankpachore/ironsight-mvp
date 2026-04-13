@@ -65,16 +65,18 @@ describe("accounts e2e", () => {
     expect(res.status).toBe(403);
   });
 
-  it("rep sees only assigned approved accounts", async () => {
+  it("rep sees assigned accounts and own pending requests", async () => {
     const a1 = await json<{ id: string }>(await createAccount({ byUserId: users.admin.id, name: uniqueName("Own") }));
     await approveAccount({ byUserId: users.admin.id, accountId: a1.id });
     await assignAccount({ byUserId: users.admin.id, accountId: a1.id, assigneeId: users.rep.id });
     const a2 = await json<{ id: string }>(await createAccount({ byUserId: users.admin.id, name: uniqueName("Other") }));
     await approveAccount({ byUserId: users.admin.id, accountId: a2.id });
     await assignAccount({ byUserId: users.admin.id, accountId: a2.id, assigneeId: users.rep2.id });
+    const a3 = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("RepPending") }));
     const res = await accountsGET(makeRequest("http://localhost/api/accounts", { userId: users.rep.id }));
     const rows = await json<Array<{ id: string }>>(res);
     expect(rows.map((r) => r.id)).toContain(a1.id);
+    expect(rows.map((r) => r.id)).toContain(a3.id);
     expect(rows.map((r) => r.id)).not.toContain(a2.id);
   });
 

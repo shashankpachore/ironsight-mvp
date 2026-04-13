@@ -13,7 +13,11 @@ export async function GET(request: Request) {
 
   const accounts = await prisma.account.findMany({
     where: { status: AccountStatus.PENDING },
-    include: { createdBy: true, assignedTo: true },
+    include: {
+      createdBy: true,
+      assignedTo: true,
+      requestedBy: { select: { id: true, name: true, role: true } },
+    },
     orderBy: { createdAt: "asc" },
   });
 

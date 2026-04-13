@@ -1,20 +1,53 @@
+import { AccountStatus, AccountType, AuditAction, AuditEntityType } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { AuditAction, AuditEntityType } from "@prisma/client";
 import { normalizeCompanyName } from "@/lib/accounts";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { isValidIndiaState } from "@/lib/india-states";
 import { prisma } from "@/lib/prisma";
+
+function parseAccountType(raw: unknown): AccountType | null {
+  if (raw === AccountType.SCHOOL || raw === "SCHOOL") return AccountType.SCHOOL;
+  if (raw === AccountType.PARTNER || raw === "PARTNER") return AccountType.PARTNER;
+  return null;
+}
 
 export async function POST(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
 
-  const body = (await request.json()) as { name?: string };
-  if (!body?.name || typeof body.name !== "string") {
+  const body = (await request.json()) as {
+    type?: unknown;
+    name?: unknown;
+    district?: unknown;
+    state?: unknown;
+  };
+
+  const type = parseAccountType(body?.type);
+  if (!type) {
+    return NextResponse.json({ error: "type is required (SCHOOL or PARTNER)" }, { status: 400 });
+  }
+
+  if (typeof body?.name !== "string" || !body.name.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
 
-  const normalized = normalizeCompanyName(body.name);
+  if (typeof body?.district !== "string" || !body.district.trim()) {
+    return NextResponse.json({ error: "district is required" }, { status: 400 });
+  }
+
+  if (typeof body?.state !== "string" || !body.state.trim()) {
+    return NextResponse.json({ error: "state is required" }, { status: 400 });
+  }
+
+  const state = body.state.trim();
+  if (!isValidIndiaState(state)) {
+    return NextResponse.json({ error: "state must be a valid Indian state or UT" }, { status: 400 });
+  }
+
+  const name = body.name.trim();
+  const district = body.district.trim();
+  const normalized = normalizeCompanyName(name);
   const existing = await prisma.account.findUnique({ where: { normalized } });
   if (existing) {
     return NextResponse.json(
@@ -25,9 +58,14 @@ export async function POST(request: Request) {
 
   const account = await prisma.account.create({
     data: {
-      name: body.name.trim(),
+      name,
       normalized,
+      type,
+      state,
+      district,
+      status: AccountStatus.PENDING,
       createdById: user.id,
+      requestedById: user.id,
     },
   });
 

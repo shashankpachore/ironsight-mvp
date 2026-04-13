@@ -103,5 +103,6 @@ describe("audit + account import", () => {
     expect(account).toBeTruthy();
     expect(account?.status).toBe("PENDING");
     expect(account?.assignedToId).toBe(users.rep.id);
+    expect(account?.requestedById).toBe(users.rep.id);
   });
 });

@@ -3,6 +3,7 @@ import { GET as dealGET } from "../app/api/deals/[id]/route";
 import { GET as logsGET } from "../app/api/logs/[dealId]/route";
 import { POST as logsPOST } from "../app/api/logs/route";
 import { InteractionType, Outcome, RiskCategory, StakeholderType } from "@prisma/client";
+import { defaultNextStepRequestFields } from "../lib/next-step";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 
@@ -31,14 +32,28 @@ describe("ownership integrity under mutations", () => {
       makeRequest("http://localhost/api/logs", {
         method: "POST",
         userId: users.rep.id,
-        body: { dealId, interactionType: InteractionType.CALL, outcome: Outcome.NO_RESPONSE, stakeholderType: StakeholderType.UNKNOWN, risks: [RiskCategory.NO_ACCESS_TO_DM] },
+        body: {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.NO_RESPONSE,
+          stakeholderType: StakeholderType.UNKNOWN,
+          risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
+        },
       }),
     );
     const newLog = await logsPOST(
       makeRequest("http://localhost/api/logs", {
         method: "POST",
         userId: users.rep2.id,
-        body: { dealId, interactionType: InteractionType.CALL, outcome: Outcome.NO_RESPONSE, stakeholderType: StakeholderType.UNKNOWN, risks: [RiskCategory.NO_ACCESS_TO_DM] },
+        body: {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.NO_RESPONSE,
+          stakeholderType: StakeholderType.UNKNOWN,
+          risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
+        },
       }),
     );
     expect(oldLog.status).toBe(403);
@@ -51,7 +66,14 @@ describe("ownership integrity under mutations", () => {
       makeRequest("http://localhost/api/logs", {
         method: "POST",
         userId: users.rep2.id,
-        body: { dealId, interactionType: InteractionType.CALL, outcome: Outcome.NO_RESPONSE, stakeholderType: StakeholderType.UNKNOWN, risks: [RiskCategory.NO_ACCESS_TO_DM] },
+        body: {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.NO_RESPONSE,
+          stakeholderType: StakeholderType.UNKNOWN,
+          risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
+        },
       }),
     );
     const oldLogs = await logsGET(makeRequest(`http://localhost/api/logs/${dealId}`, { userId: users.rep.id }), { params: Promise.resolve({ dealId }) });

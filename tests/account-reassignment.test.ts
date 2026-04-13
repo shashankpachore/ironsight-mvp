@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GET as dealsGET } from "../app/api/deals/route";
 import { POST as logsPOST } from "../app/api/logs/route";
 import { InteractionType, Outcome, RiskCategory, StakeholderType } from "@prisma/client";
+import { defaultNextStepRequestFields } from "../lib/next-step";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { prisma } from "../lib/prisma";
@@ -52,6 +53,7 @@ describe("account reassignment effects", () => {
           outcome: Outcome.NO_RESPONSE,
           stakeholderType: StakeholderType.UNKNOWN,
           risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
         },
       }),
     );

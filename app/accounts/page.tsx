@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useTestSession } from "@/components/test-session-bar";
+import { INDIAN_STATES_AND_UTS } from "@/lib/india-states";
 
 type User = { id: string; email: string; role: string };
 type Account = {
@@ -12,6 +13,8 @@ type Account = {
   state?: string;
   district?: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
+  requestedById?: string | null;
+  requestedBy?: { id: string; name: string; role: string } | null;
   assignedToId: string | null;
   assignedTo?: { email: string } | null;
 };
@@ -27,41 +30,88 @@ type ImportPreviewRow = {
   errors: string[];
 };
 
+function formatAccountType(type: string | undefined) {
+  if (type === "PARTNER") return "Partner";
+  if (type === "SCHOOL") return "School";
+  return type ?? "—";
+}
+
+function formatAccountStatus(account: Account) {
+  if (account.status === "PENDING") return "Pending Approval";
+  if (account.status === "REJECTED") return "Rejected";
+  if (account.assignedToId) return "Assigned";
+  if (account.status === "APPROVED") return "Approved (Not Assigned)";
+  return account.status;
+}
+
 export default function AccountsPage() {
   const { header, currentUser } = useTestSession();
+  const isAdmin = currentUser?.role === "ADMIN";
   const isRep = currentUser?.role === "REP";
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [pending, setPending] = useState<Account[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [requestType, setRequestType] = useState<"SCHOOL" | "PARTNER">("SCHOOL");
   const [name, setName] = useState("");
+  const [district, setDistrict] = useState("");
+  const [requestState, setRequestState] = useState("");
   const [error, setError] = useState("");
   const [assignUserByAccount, setAssignUserByAccount] = useState<Record<string, string>>({});
   const [importFile, setImportFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    setAssignUserByAccount((prev) => {
+      const next = { ...prev };
+      for (const a of accounts) {
+        if (a.status !== "APPROVED") continue;
+        if (a.id in next) continue;
+        if (a.requestedBy?.role === "REP" && a.requestedById) {
+          next[a.id] = a.requestedById;
+        }
+      }
+      return next;
+    });
+  }, [accounts]);
   const [importPreview, setImportPreview] = useState<ImportPreviewRow[]>([]);
   const [importSummary, setImportSummary] = useState("");
 
   async function loadAll() {
     const accountsUrl = isRep ? "/api/accounts" : "/api/accounts?includeAll=1";
-    const [accountsRes, pendingRes, usersRes] = await Promise.all([
+    const [accountsRes, usersRes] = await Promise.all([
       fetch(accountsUrl, { headers: header }),
-      fetch("/api/accounts/pending", { headers: header }),
       fetch("/api/users", { headers: header }),
     ]);
     if (accountsRes.ok) setAccounts(await accountsRes.json());
-    if (pendingRes.ok) setPending(await pendingRes.json());
     if (usersRes.ok) setUsers(await usersRes.json());
+
+    if (isAdmin) {
+      const pendingRes = await fetch("/api/accounts/pending", { headers: header });
+      if (pendingRes.ok) setPending(await pendingRes.json());
+      return;
+    }
+
+    setPending([]);
   }
 
   async function requestAccount(e: FormEvent) {
     e.preventDefault();
     setError("");
+    if (!requestState.trim()) {
+      setError("State is required");
+      return;
+    }
     const res = await fetch("/api/accounts/request", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...header,
       },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({
+        type: requestType,
+        name: name.trim(),
+        district: district.trim(),
+        state: requestState.trim(),
+      }),
     });
     if (!res.ok) {
       const data = await res.json();
@@ -69,6 +119,9 @@ export default function AccountsPage() {
       return;
     }
     setName("");
+    setDistrict("");
+    setRequestState("");
+    setRequestType("SCHOOL");
     await loadAll();
   }
 
@@ -153,7 +206,6 @@ export default function AccountsPage() {
     const res = await fetch("/api/accounts/import?mode=confirm", {
       method: "POST",
       headers: header,
-      body: formData,
     });
     const body = await res.json();
     if (!res.ok) {
@@ -163,6 +215,10 @@ export default function AccountsPage() {
     setImportSummary(`Imported: ${body.imported} | Skipped: ${body.skipped}`);
     await loadAll();
   }
+
+  const nameLabel = requestType === "PARTNER" ? "Partner Name" : "School Name";
+  const formValid =
+    requestType && name.trim().length > 0 && district.trim().length > 0 && requestState.trim().length > 0;
 
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
@@ -187,7 +243,7 @@ export default function AccountsPage() {
       <section className="border rounded-lg p-4 space-y-3">
         <h2 className="font-medium">Import Accounts CSV</h2>
         <p className="text-sm text-gray-600">
-          Supported columns: School Name, State, District OR Partner Name, State, District.
+          Same fields as manual request: School Name or Partner Name, State, District (CSV columns).
         </p>
         <div className="flex items-center gap-3">
           <label
@@ -240,15 +296,75 @@ export default function AccountsPage() {
 
       <section className="border rounded-lg p-4">
         <h2 className="font-medium mb-3">Request Account</h2>
-        <form onSubmit={requestAccount} className="flex gap-2">
-          <input
-            className="border rounded px-3 py-2 flex-1"
-            placeholder="Account name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <button className="rounded bg-black text-white px-4 py-2">Request Account</button>
+        <p className="text-sm text-gray-600 mb-3">
+          Manual entry uses the same fields as CSV: type, name, state, and district.
+        </p>
+        <form onSubmit={requestAccount} className="space-y-3 max-w-xl">
+          <div>
+            <label htmlFor="req-type" className="block text-sm font-medium mb-1">
+              Type
+            </label>
+            <select
+              id="req-type"
+              className="border rounded px-3 py-2 w-full text-sm"
+              value={requestType}
+              onChange={(e) => setRequestType(e.target.value as "SCHOOL" | "PARTNER")}
+              required
+            >
+              <option value="SCHOOL">School</option>
+              <option value="PARTNER">Partner</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="req-name" className="block text-sm font-medium mb-1">
+              {nameLabel}
+            </label>
+            <input
+              id="req-name"
+              className="border rounded px-3 py-2 w-full"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="req-district" className="block text-sm font-medium mb-1">
+              District
+            </label>
+            <input
+              id="req-district"
+              className="border rounded px-3 py-2 w-full"
+              value={district}
+              onChange={(e) => setDistrict(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="req-state" className="block text-sm font-medium mb-1">
+              State
+            </label>
+            <select
+              id="req-state"
+              className="border rounded px-3 py-2 w-full text-sm"
+              value={requestState}
+              onChange={(e) => setRequestState(e.target.value)}
+              required
+            >
+              <option value="">Select state</option>
+              {INDIAN_STATES_AND_UTS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="submit"
+            disabled={!formValid}
+            className="rounded bg-black text-white px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Request Account
+          </button>
         </form>
         {error ? <p className="text-sm text-red-600 mt-2">{error}</p> : null}
       </section>
@@ -257,14 +373,24 @@ export default function AccountsPage() {
         <h2 className="font-medium mb-3">All Visible Accounts</h2>
         <div className="space-y-2">
           {accounts.map((account) => (
-            <div key={account.id} className="border rounded p-3 space-y-2">
-              <p>{account.name}</p>
-              <p className="text-sm">Type: {account.type ?? "-"}</p>
-              <p className="text-sm">Location: {account.state ?? "-"} / {account.district ?? "-"}</p>
-              <p className="text-sm">Status: {account.status}</p>
-              <p className="text-sm">Assigned: {account.assignedTo?.email ?? "Unassigned"}</p>
+            <div key={account.id} className="border rounded p-3 space-y-1">
+              <p className="font-medium">{account.name}</p>
+              <p className="text-sm">Type: {formatAccountType(account.type)}</p>
+              <p className="text-sm">District: {account.district ?? "—"}</p>
+              <p className="text-sm">State: {account.state ?? "—"}</p>
+              <p className="text-sm">Status: {formatAccountStatus(account)}</p>
+              <p className="text-sm text-gray-600">
+                Assigned: {account.assignedTo?.email ?? "Unassigned"}
+              </p>
+              {account.requestedById && currentUser?.id === account.requestedById ? (
+                <p className="text-xs text-gray-600">Requested by you</p>
+              ) : account.requestedBy ? (
+                <p className="text-xs text-gray-600">
+                  Requested by: {account.requestedBy.name} ({account.requestedBy.role})
+                </p>
+              ) : null}
               {account.status === "APPROVED" ? (
-                <div className={`flex gap-2 ${isRep ? "opacity-60" : ""}`}>
+                <div className={`flex flex-wrap items-center gap-2 pt-2 ${isRep ? "opacity-60" : ""}`}>
                   <select
                     className={`border rounded px-2 py-1 text-sm ${isRep ? "cursor-not-allowed" : ""}`}
                     value={assignUserByAccount[account.id] ?? ""}
@@ -304,33 +430,62 @@ export default function AccountsPage() {
         </div>
       </section>
 
-      <section className="border rounded-lg p-4">
-        <h2 className="font-medium mb-3">Pending Accounts (Admin)</h2>
-        <div className="space-y-2">
-          {pending.map((account) => (
-            <div key={account.id} className="border rounded p-3 flex items-center justify-between">
-              <p>{account.name}</p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => approve(account.id)}
-                  className="rounded border px-3 py-1 text-sm"
-                >
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  onClick={() => reject(account.id)}
-                  className="rounded border px-3 py-1 text-sm"
-                >
-                  Reject
-                </button>
-              </div>
+      {isAdmin ? (
+        <section className="border rounded-lg p-4">
+          <h2 className="font-medium mb-3">Pending Accounts (Admin)</h2>
+          {pending.length === 0 ? (
+            <p>No pending accounts.</p>
+          ) : (
+            <div className="overflow-x-auto border rounded">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50 text-left">
+                    <th className="p-2 font-medium">Name</th>
+                    <th className="p-2 font-medium">Type</th>
+                    <th className="p-2 font-medium">District</th>
+                    <th className="p-2 font-medium">State</th>
+                    <th className="p-2 font-medium">Requested By</th>
+                    <th className="p-2 font-medium">Status</th>
+                    <th className="p-2 font-medium w-[1%] whitespace-nowrap">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map((account) => (
+                    <tr key={account.id} className="border-b last:border-0">
+                      <td className="p-2 align-middle">{account.name}</td>
+                      <td className="p-2 align-middle">{formatAccountType(account.type)}</td>
+                      <td className="p-2 align-middle text-gray-700">{account.district ?? "—"}</td>
+                      <td className="p-2 align-middle text-gray-700">{account.state ?? "—"}</td>
+                      <td className="p-2 align-middle text-gray-700">
+                        {account.requestedBy?.name ?? "Unknown"}
+                      </td>
+                      <td className="p-2 align-middle">{formatAccountStatus(account)}</td>
+                      <td className="p-2 align-middle">
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            type="button"
+                            onClick={() => approve(account.id)}
+                            className="rounded border px-3 py-1 text-sm"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => reject(account.id)}
+                            className="rounded border px-3 py-1 text-sm"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
-          {pending.length === 0 ? <p>No pending accounts.</p> : null}
-        </div>
-      </section>
+          )}
+        </section>
+      ) : null}
     </main>
   );
 }

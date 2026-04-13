@@ -3,6 +3,7 @@ import { PATCH as userPATCH, DELETE as userDELETE } from "../app/api/users/[id]/
 import { GET as pipelineGET } from "../app/api/pipeline/route";
 import { POST as logsPOST } from "../app/api/logs/route";
 import { InteractionType, Outcome, RiskCategory, StakeholderType, UserRole } from "@prisma/client";
+import { defaultNextStepRequestFields } from "../lib/next-step";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { prisma } from "../lib/prisma";
@@ -39,6 +40,7 @@ describe("adversarial role mutation scenarios", () => {
           outcome: Outcome.NO_RESPONSE,
           stakeholderType: StakeholderType.UNKNOWN,
           risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
         },
       }),
     );
@@ -86,6 +88,7 @@ describe("adversarial role mutation scenarios", () => {
           outcome: Outcome.NO_RESPONSE,
           stakeholderType: StakeholderType.UNKNOWN,
           risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
         },
       }),
     );
@@ -99,6 +102,7 @@ describe("adversarial role mutation scenarios", () => {
           outcome: Outcome.NO_RESPONSE,
           stakeholderType: StakeholderType.UNKNOWN,
           risks: [RiskCategory.NO_ACCESS_TO_DM],
+          ...defaultNextStepRequestFields(Outcome.NO_RESPONSE),
         },
       }),
     );

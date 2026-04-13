@@ -1,4 +1,4 @@
-import { AccountStatus, UserRole } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -15,12 +15,17 @@ export async function GET(request: Request) {
 
   const where =
     user.role === UserRole.REP
-      ? { assignedToId: user.id, status: AccountStatus.APPROVED }
+      ? {
+          OR: [{ assignedToId: user.id }, { requestedById: user.id }],
+        }
       : {};
 
   const accounts = await prisma.account.findMany({
     where,
-    include: { assignedTo: true },
+    include: {
+      assignedTo: true,
+      requestedBy: { select: { id: true, name: true, role: true } },
+    },
     orderBy: { createdAt: "desc" },
   });
 

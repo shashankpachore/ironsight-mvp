@@ -4,6 +4,7 @@ import {
   RiskCategory,
   StakeholderType,
 } from "@prisma/client";
+import { isValidNextStepType } from "./next-step";
 import { isValidProduct } from "./products";
 
 function isEnumValue<T extends Record<string, string>>(
@@ -47,6 +48,26 @@ export function validateLogInput(input: unknown) {
   }
   if (body.notes !== undefined && typeof body.notes !== "string") {
     return "notes must be a string";
+  }
+  if (!isValidNextStepType(body.nextStepType)) {
+    return "nextStepType required";
+  }
+  if (typeof body.nextStepDate !== "string" || !body.nextStepDate.trim()) {
+    return "nextStepDate required";
+  }
+  const nextDate = new Date(body.nextStepDate);
+  if (Number.isNaN(nextDate.getTime())) {
+    return "invalid nextStepDate";
+  }
+  if (body.nextStepNote !== undefined && typeof body.nextStepNote !== "string") {
+    return "nextStepNote must be a string";
+  }
+  if (
+    body.nextStepSource !== undefined &&
+    body.nextStepSource !== "AUTO" &&
+    body.nextStepSource !== "MANUAL"
+  ) {
+    return "nextStepSource must be AUTO or MANUAL";
   }
   return null;
 }

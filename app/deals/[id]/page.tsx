@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatInr } from "@/lib/currency";
 import { getDealStage, getMissingSignals } from "@/lib/deals";
+import { NEXT_STEP_LABELS, type NextStepTypeValue } from "@/lib/next-step";
 import { prisma } from "@/lib/prisma";
 
 export default async function DealDetailPage({
@@ -41,6 +42,15 @@ export default async function DealDetailPage({
           Missing signals:{" "}
           {missingSignals.length ? missingSignals.join(", ") : "None"}
         </p>
+        {deal.nextStepType && deal.nextStepDate ? (
+          <p className="text-sm text-gray-800">
+            Next step:{" "}
+            {NEXT_STEP_LABELS[deal.nextStepType as NextStepTypeValue] ?? deal.nextStepType}
+            {" · "}
+            {deal.nextStepDate.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+            {deal.nextStepNote ? ` · ${deal.nextStepNote}` : ""}
+          </p>
+        ) : null}
         <Link
           href={`/deals/${deal.id}/log`}
           className="inline-block mt-3 rounded bg-black px-3 py-2 text-white"
