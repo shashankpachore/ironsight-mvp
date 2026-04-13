@@ -65,7 +65,7 @@ describe("accounts e2e", () => {
     expect(res.status).toBe(403);
   });
 
-  it("rep sees assigned accounts and own pending requests", async () => {
+  it("rep sees only assigned accounts", async () => {
     const a1 = await json<{ id: string }>(await createAccount({ byUserId: users.admin.id, name: uniqueName("Own") }));
     await approveAccount({ byUserId: users.admin.id, accountId: a1.id });
     await assignAccount({ byUserId: users.admin.id, accountId: a1.id, assigneeId: users.rep.id });
@@ -76,15 +76,26 @@ describe("accounts e2e", () => {
     const res = await accountsGET(makeRequest("http://localhost/api/accounts", { userId: users.rep.id }));
     const rows = await json<Array<{ id: string }>>(res);
     expect(rows.map((r) => r.id)).toContain(a1.id);
-    expect(rows.map((r) => r.id)).toContain(a3.id);
+    expect(rows.map((r) => r.id)).not.toContain(a3.id);
     expect(rows.map((r) => r.id)).not.toContain(a2.id);
   });
 
-  it("manager sees all by default", async () => {
-    await createAccount({ byUserId: users.rep.id, name: uniqueName("MAll1") });
-    await createAccount({ byUserId: users.rep2.id, name: uniqueName("MAll2") });
+  it("manager sees only own-team assigned accounts", async () => {
+    const a1 = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("MAll1") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: a1.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: a1.id, assigneeId: users.rep.id });
+    const a2 = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("MAll2") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: a2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: a2.id, assigneeId: users.rep2.id });
+
     const res = await accountsGET(makeRequest("http://localhost/api/accounts", { userId: users.manager.id }));
-    expect((await json<unknown[]>(res)).length).toBeGreaterThanOrEqual(2);
+    const rows = await json<Array<{ id: string }>>(res);
+    expect(rows.map((r) => r.id)).toContain(a1.id);
+    expect(rows.map((r) => r.id)).not.toContain(a2.id);
   });
 
   it("pending endpoint admin only", async () => {

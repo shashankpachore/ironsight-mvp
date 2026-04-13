@@ -13,12 +13,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const where =
-    user.role === UserRole.REP
-      ? {
-          OR: [{ assignedToId: user.id }, { requestedById: user.id }],
-        }
-      : {};
+  let where = {};
+  if (user.role === UserRole.REP) {
+    where = { assignedToId: user.id };
+  } else if (user.role === UserRole.MANAGER) {
+    const reps = await prisma.user.findMany({
+      where: { managerId: user.id, role: UserRole.REP },
+      select: { id: true },
+    });
+    const teamIds = [user.id, ...reps.map((rep) => rep.id)];
+    where = { assignedToId: { in: teamIds } };
+  }
 
   const accounts = await prisma.account.findMany({
     where,

@@ -151,7 +151,7 @@ describe("accounts api - adversarial + permissions", () => {
     expect(res.status).toBe(404);
   });
 
-  it("rep sees assigned accounts and own pending requests, not other reps' assignments", async () => {
+  it("rep sees only assigned accounts, not pending requests or other reps' assignments", async () => {
     const a1 = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("RepViewYes") }));
     await approveAccount({ byUserId: users.admin.id, accountId: a1.id });
     await assignAccount({ byUserId: users.admin.id, accountId: a1.id, assigneeId: users.rep.id });
@@ -166,17 +166,27 @@ describe("accounts api - adversarial + permissions", () => {
     const list = await json<Array<{ id: string }>>(res);
     expect(res.status).toBe(200);
     expect(list.map((x) => x.id)).toContain(a1.id);
-    expect(list.map((x) => x.id)).toContain(a3.id);
+    expect(list.map((x) => x.id)).not.toContain(a3.id);
     expect(list.map((x) => x.id)).not.toContain(a2.id);
   });
 
-  it("manager includeAll=1 sees all accounts", async () => {
-    await createAccount({ byUserId: users.rep.id, name: uniqueName("MgrAll1") });
-    await createAccount({ byUserId: users.rep2.id, name: uniqueName("MgrAll2") });
+  it("manager includeAll=1 sees only own-team assigned accounts", async () => {
+    const a1 = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("MgrAll1") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: a1.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: a1.id, assigneeId: users.rep.id });
+    const a2 = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("MgrAll2") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: a2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: a2.id, assigneeId: users.rep2.id });
+
     const res = await getAccountsRoute(makeRequest("http://localhost/api/accounts?includeAll=1", { userId: users.manager.id }));
     const list = await json<Array<{ id: string }>>(res);
     expect(res.status).toBe(200);
-    expect(list.length).toBeGreaterThanOrEqual(2);
+    expect(list.map((x) => x.id)).toContain(a1.id);
+    expect(list.map((x) => x.id)).not.toContain(a2.id);
   });
 
   it("admin includeAll=1 sees all accounts", async () => {
