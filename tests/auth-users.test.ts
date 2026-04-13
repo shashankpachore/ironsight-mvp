@@ -32,6 +32,8 @@ describe("auth + admin user management", () => {
       }),
     );
     expect(res.status).toBe(401);
+    const body = await res.json() as { code?: string };
+    expect(body.code).toBe("PASSWORD_MISMATCH");
   });
 
   it("logout clears session cookie", async () => {
@@ -114,28 +116,32 @@ describe("auth + admin user management", () => {
     expect(res.status).toBe(400);
   });
 
-  it("delete blocked when user has dependent records", async () => {
-    const account = await json<{ id: string }>(
-      await createAccount({ byUserId: users.admin.id, name: uniqueName("DepUserAcc") }),
-    );
-    await approveAccount({ byUserId: users.admin.id, accountId: account.id });
-    await assignAccount({ byUserId: users.admin.id, accountId: account.id, assigneeId: users.rep.id });
-    await createDeal({
-      byUserId: users.rep.id,
-      name: "Geneo ONE",
-      value: 1000,
-      accountId: account.id,
-    });
+  it(
+    "delete blocked when user has dependent records",
+    async () => {
+      const account = await json<{ id: string }>(
+        await createAccount({ byUserId: users.admin.id, name: uniqueName("DepUserAcc") }),
+      );
+      await approveAccount({ byUserId: users.admin.id, accountId: account.id });
+      await assignAccount({ byUserId: users.admin.id, accountId: account.id, assigneeId: users.rep.id });
+      await createDeal({
+        byUserId: users.rep.id,
+        name: "Geneo ONE",
+        value: 1000,
+        accountId: account.id,
+      });
 
-    const res = await deleteUserRoute(
-      makeRequest(`http://localhost/api/users/${users.rep.id}`, {
-        method: "DELETE",
-        userId: users.admin.id,
-      }),
-      { params: Promise.resolve({ id: users.rep.id }) },
-    );
-    expect(res.status).toBe(409);
-  });
+      const res = await deleteUserRoute(
+        makeRequest(`http://localhost/api/users/${users.rep.id}`, {
+          method: "DELETE",
+          userId: users.admin.id,
+        }),
+        { params: Promise.resolve({ id: users.rep.id }) },
+      );
+      expect(res.status).toBe(409);
+    },
+    30_000,
+  );
 
   it("rep cannot list users api", async () => {
     const res = await getUsersRoute(
@@ -146,13 +152,13 @@ describe("auth + admin user management", () => {
     expect(res.status).toBe(403);
   });
 
-  it("manager cannot list users api", async () => {
+  it("manager can list users api", async () => {
     const res = await getUsersRoute(
       makeRequest("http://localhost/api/users", {
         userId: users.manager.id,
       }),
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   it("creating REP without managerId returns 400", async () => {

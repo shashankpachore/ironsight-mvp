@@ -60,10 +60,12 @@ describe("audit + account import", () => {
     ]);
   });
 
-  it("audit API is admin-only", async () => {
+  it("audit API allows admin and manager, blocks rep", async () => {
     const adminRes = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.admin.id }));
+    const managerRes = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.manager.id }));
     const repRes = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.rep.id }));
     expect(adminRes.status).toBe(200);
+    expect(managerRes.status).toBe(200);
     expect(repRes.status).toBe(403);
   });
 

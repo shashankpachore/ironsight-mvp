@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GET as sessionMeGET } from "../app/api/session/me/route";
 import { POST as loginPOST } from "../app/api/auth/login/route";
 import { POST as logoutPOST } from "../app/api/auth/logout/route";
-import { makeRequest, resetDbAndSeedUsers } from "./helpers";
+import { json, makeRequest, resetDbAndSeedUsers } from "./helpers";
 
 describe("auth e2e", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;
@@ -30,6 +30,8 @@ describe("auth e2e", () => {
       }),
     );
     expect(res.status).toBe(401);
+    const body = await json<{ code?: string }>(res);
+    expect(body.code).toBe("PASSWORD_MISMATCH");
   });
 
   it("login failure for invalid email", async () => {
@@ -40,6 +42,8 @@ describe("auth e2e", () => {
       }),
     );
     expect(res.status).toBe(401);
+    const body = await json<{ code?: string }>(res);
+    expect(body.code).toBe("USER_NOT_FOUND");
   });
 
   it("session persists across request when cookie is reused", async () => {

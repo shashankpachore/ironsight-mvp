@@ -16,47 +16,65 @@ export type SeededUsers = {
 };
 
 export async function resetDbAndSeedUsers(): Promise<SeededUsers> {
-  await prisma.interactionRisk.deleteMany();
-  await prisma.interactionLog.deleteMany();
-  await prisma.deal.deleteMany();
-  await prisma.account.deleteMany();
-  await prisma.user.deleteMany();
+  const url = process.env.DATABASE_URL ?? "";
 
-  const admin = await prisma.user.create({
-    data: { name: "Admin", email: "admin@ironsight.local", password: "test1234", role: UserRole.ADMIN },
-  });
-  const manager = await prisma.user.create({
-    data: { name: "Manager", email: "manager@ironsight.local", password: "test1234", role: UserRole.MANAGER },
-  });
-  const manager2 = await prisma.user.create({
-    data: { name: "Manager Two", email: "manager2@ironsight.local", password: "test1234", role: UserRole.MANAGER },
-  });
-  const rep = await prisma.user.create({
-    data: {
-      name: "Rep",
-      email: "rep@ironsight.local",
-      password: "test1234",
-      role: UserRole.REP,
-      managerId: manager.id,
-    },
-  });
-  const rep2 = await prisma.user.create({
-    data: {
-      name: "Rep Two",
-      email: "rep2@ironsight.local",
-      password: "test1234",
-      role: UserRole.REP,
-      managerId: manager2.id,
-    },
-  });
-
-  return {
-    admin: { id: admin.id, email: admin.email, role: admin.role },
-    manager: { id: manager.id, email: manager.email, role: manager.role },
-    manager2: { id: manager2.id, email: manager2.email, role: manager2.role },
-    rep: { id: rep.id, email: rep.email, role: rep.role },
-    rep2: { id: rep2.id, email: rep2.email, role: rep2.role },
+  const seed = async (tx: Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">) => {
+    const admin = await tx.user.create({
+      data: { name: "Admin", email: "admin@ironsight.local", password: "test1234", role: UserRole.ADMIN },
+    });
+    const manager = await tx.user.create({
+      data: { name: "Manager", email: "manager@ironsight.local", password: "test1234", role: UserRole.MANAGER },
+    });
+    const manager2 = await tx.user.create({
+      data: { name: "Manager Two", email: "manager2@ironsight.local", password: "test1234", role: UserRole.MANAGER },
+    });
+    const rep = await tx.user.create({
+      data: {
+        name: "Rep",
+        email: "rep@ironsight.local",
+        password: "test1234",
+        role: UserRole.REP,
+        managerId: manager.id,
+      },
+    });
+    const rep2 = await tx.user.create({
+      data: {
+        name: "Rep Two",
+        email: "rep2@ironsight.local",
+        password: "test1234",
+        role: UserRole.REP,
+        managerId: manager2.id,
+      },
+    });
+    return {
+      admin: { id: admin.id, email: admin.email, role: admin.role },
+      manager: { id: manager.id, email: manager.email, role: manager.role },
+      manager2: { id: manager2.id, email: manager2.email, role: manager2.role },
+      rep: { id: rep.id, email: rep.email, role: rep.role },
+      rep2: { id: rep2.id, email: rep2.email, role: rep2.role },
+    };
   };
+
+  // Run wipe + seed in one transaction so pooled DBs (e.g. Neon) do not read stale rows on another connection.
+  if (url.startsWith("postgres")) {
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `TRUNCATE TABLE "InteractionRisk", "InteractionLog", "Deal", "Account", "AuditLog", "User" RESTART IDENTITY CASCADE;`,
+      );
+      return seed(tx);
+    });
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.interactionRisk.deleteMany();
+    await tx.interactionLog.deleteMany();
+    await tx.deal.deleteMany();
+    await tx.account.deleteMany();
+    await tx.auditLog.deleteMany();
+    await tx.user.updateMany({ data: { managerId: null } });
+    await tx.user.deleteMany();
+    return seed(tx);
+  });
 }
 
 export function makeRequest(url: string, init?: { method?: string; body?: unknown; userId?: string }) {

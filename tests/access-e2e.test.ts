@@ -12,14 +12,14 @@ describe("access control e2e", () => {
     users = await resetDbAndSeedUsers();
   });
 
-  it("rep blocked from admin APIs", async () => {
+  it("rep blocked from users list API", async () => {
     const res = await usersGET(makeRequest("http://localhost/api/users", { userId: users.rep.id }));
     expect(res.status).toBe(403);
   });
 
-  it("manager blocked from admin-only APIs", async () => {
+  it("manager can list users", async () => {
     const res = await usersGET(makeRequest("http://localhost/api/users", { userId: users.manager.id }));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   it("header ignored in non-test env", async () => {

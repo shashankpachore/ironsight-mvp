@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { CreateDealForm } from "@/components/create-deal-form";
+import { SESSION_COOKIE_NAME } from "@/lib/auth";
 import { formatInr } from "@/lib/currency";
 import { sortDealsByDisplayOrder } from "@/lib/deal-order";
+import { canViewAdminSections } from "@/lib/permissions";
+import { prisma } from "@/lib/prisma";
 
 type DealItem = {
   id: string;
@@ -15,6 +18,16 @@ type DealItem = {
 };
 
 export default async function Home() {
+  const cookieStore = await cookies();
+  const sessionUserId = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  const sessionUser = sessionUserId
+    ? await prisma.user.findUnique({
+      where: { id: sessionUserId },
+      select: { role: true },
+    })
+    : null;
+  const showAdminNav = canViewAdminSections(sessionUser?.role);
+
   const incomingHeaders = await headers();
   const host = incomingHeaders.get("host");
   const protocol = process.env.NODE_ENV === "development" ? "http" : "https";
@@ -57,12 +70,19 @@ export default async function Home() {
         <Link href="/pipeline" className="underline">
           Pipeline
         </Link>
-        <Link href="/users" className="underline">
-          Users
-        </Link>
-        <Link href="/audit" className="underline">
-          Audit
-        </Link>
+        {showAdminNav ? (
+          <>
+            <Link href="/users" className="underline">
+              Users
+            </Link>
+            <Link href="/audit" className="underline">
+              Audit
+            </Link>
+            <Link href="/activity" className="underline">
+              Activity
+            </Link>
+          </>
+        ) : null}
         <a href="/api/export" className="underline">
           Export Data
         </a>

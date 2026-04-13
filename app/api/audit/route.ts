@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { requireAdmin } from "@/lib/authz";
+import { requireAdminSectionAccess } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
   const user = await getCurrentUser(request);
-  const authzError = requireAdmin(user);
+  const authzError = requireAdminSectionAccess(user);
   if (authzError) return authzError;
 
   const logs = await prisma.auditLog.findMany({

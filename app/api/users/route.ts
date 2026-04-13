@@ -3,14 +3,14 @@
 import { AuditAction, AuditEntityType, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getCurrentUser, hashPassword } from "@/lib/auth";
-import { requireAdmin } from "@/lib/authz";
+import { requireAdmin, requireAdminSectionAccess } from "@/lib/authz";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
   const currentUser = await getCurrentUser(request);
-  const authzError = requireAdmin(currentUser);
-  if (authzError) return authzError;
+  const sectionError = requireAdminSectionAccess(currentUser);
+  if (sectionError) return sectionError;
 
   const users = await prisma.user.findMany({
     select: { id: true, name: true, email: true, role: true, managerId: true },
@@ -21,6 +21,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const currentUser = await getCurrentUser(request);
+  const sectionError = requireAdminSectionAccess(currentUser);
+  if (sectionError) return sectionError;
   const authzError = requireAdmin(currentUser);
   if (authzError) return authzError;
 

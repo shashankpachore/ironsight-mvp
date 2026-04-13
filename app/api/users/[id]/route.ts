@@ -1,6 +1,7 @@
 import { AuditAction, AuditEntityType, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getCurrentUser, hasRole, hashPassword } from "@/lib/auth";
+import { requireAdminSectionAccess } from "@/lib/authz";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
@@ -9,6 +10,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const currentUser = await getCurrentUser(request);
+  const sectionError = requireAdminSectionAccess(currentUser);
+  if (sectionError) return sectionError;
   if (!currentUser) return NextResponse.json({ error: "user not found" }, { status: 401 });
   if (!hasRole(currentUser.role, [UserRole.ADMIN])) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
@@ -104,6 +107,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const currentUser = await getCurrentUser(request);
+  const sectionError = requireAdminSectionAccess(currentUser);
+  if (sectionError) return sectionError;
   if (!currentUser) return NextResponse.json({ error: "user not found" }, { status: 401 });
   if (!hasRole(currentUser.role, [UserRole.ADMIN])) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
