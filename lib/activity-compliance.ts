@@ -21,26 +21,31 @@ export async function getActivityComplianceRows(params: {
   const now = params.now ?? new Date();
   const w = getComplianceWindows(now);
 
-  const repWhere: Prisma.UserWhereInput =
+  const usersWhere: Prisma.UserWhereInput =
     params.viewer.role === UserRole.MANAGER
-      ? { role: UserRole.REP, managerId: params.viewer.id }
-      : { role: UserRole.REP };
+      ? {
+          OR: [
+            { id: params.viewer.id, role: UserRole.MANAGER },
+            { role: UserRole.REP, managerId: params.viewer.id },
+          ],
+        }
+      : { role: { in: [UserRole.REP, UserRole.MANAGER] } };
 
-  const reps = await prisma.user.findMany({
-    where: repWhere,
+  const users = await prisma.user.findMany({
+    where: usersWhere,
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
 
-  const repIds = reps.map((r) => r.id);
-  if (repIds.length === 0) {
+  const userIds = users.map((u) => u.id);
+  if (userIds.length === 0) {
     return [];
   }
 
   const windowLogs = await prisma.interactionLog.findMany({
     where: {
       createdAt: { gte: w.weekStartUtc, lte: w.todayEndUtc },
-      deal: { ownerId: { in: repIds } },
+      deal: { ownerId: { in: userIds } },
     },
     select: {
       createdAt: true,
@@ -50,7 +55,7 @@ export async function getActivityComplianceRows(params: {
 
   const lastByOwner = new Map<string, Date | null>();
   const allLogsDesc = await prisma.interactionLog.findMany({
-    where: { deal: { ownerId: { in: repIds } } },
+    where: { deal: { ownerId: { in: userIds } } },
     select: {
       createdAt: true,
       deal: { select: { ownerId: true } },
@@ -66,9 +71,9 @@ export async function getActivityComplianceRows(params: {
   const yesterdayCountByOwner = new Map<string, number>();
   const weeklyDaysByOwner = new Map<string, Set<string>>();
 
-  for (const repId of repIds) {
-    yesterdayCountByOwner.set(repId, 0);
-    weeklyDaysByOwner.set(repId, new Set());
+  for (const userId of userIds) {
+    yesterdayCountByOwner.set(userId, 0);
+    weeklyDaysByOwner.set(userId, new Set());
   }
 
   for (const log of windowLogs) {
@@ -83,12 +88,12 @@ export async function getActivityComplianceRows(params: {
     }
   }
 
-  const rows: ActivityComplianceRow[] = reps.map((rep) => ({
-    userId: rep.id,
-    name: rep.name,
-    yesterdayCount: yesterdayCountByOwner.get(rep.id) ?? 0,
-    lastActivityAt: lastByOwner.get(rep.id) ?? null,
-    weeklyActiveDays: weeklyDaysByOwner.get(rep.id)?.size ?? 0,
+  const rows: ActivityComplianceRow[] = users.map((user) => ({
+    userId: user.id,
+    name: user.name,
+    yesterdayCount: yesterdayCountByOwner.get(user.id) ?? 0,
+    lastActivityAt: lastByOwner.get(user.id) ?? null,
+    weeklyActiveDays: weeklyDaysByOwner.get(user.id)?.size ?? 0,
   }));
 
   rows.sort((a, b) => {

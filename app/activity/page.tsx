@@ -69,14 +69,14 @@ export default async function ActivityPage() {
       </div>
       <h1 className="text-2xl font-semibold">Yesterday Activity Compliance</h1>
       <p className="text-sm text-gray-600">
-        Dates use IST (Asia/Kolkata). Logs are counted per rep via deal ownership.
+        Dates use IST (Asia/Kolkata). Logs are counted per manager/rep via deal ownership.
       </p>
 
       <div className="overflow-x-auto border rounded-lg">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b bg-gray-50">
-              <th className="text-left p-3 font-medium">Rep Name</th>
+              <th className="text-left p-3 font-medium">User Name</th>
               <th className="text-left p-3 font-medium">Yesterday</th>
               <th className="text-left p-3 font-medium">Last Activity</th>
               <th className="text-left p-3 font-medium">Count</th>
@@ -98,7 +98,7 @@ export default async function ActivityPage() {
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={5} className="p-4 text-gray-600">
-                  No reps in scope.
+                  No users in scope.
                 </td>
               </tr>
             ) : null}

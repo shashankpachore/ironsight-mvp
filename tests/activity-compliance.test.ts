@@ -64,20 +64,26 @@ describe("activity compliance API", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { userId: string }[];
-    const ids = body.map((r) => r.userId).sort();
-    expect(ids).toEqual([users.rep.id]);
+    const ids = new Set(body.map((r) => r.userId));
+    expect(ids.has(users.manager.id)).toBe(true);
+    expect(ids.has(users.rep.id)).toBe(true);
+    expect(ids.has(users.manager2.id)).toBe(false);
+    expect(ids.has(users.rep2.id)).toBe(false);
+    expect(body.length).toBe(2);
   });
 
-  it("admin gets 200 and includes all reps", async () => {
+  it("admin gets 200 and includes all managers and reps", async () => {
     const res = await complianceGET(
       makeRequest("http://localhost/api/activity/compliance", { userId: users.admin.id }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { userId: string }[];
     const ids = new Set(body.map((r) => r.userId));
+    expect(ids.has(users.manager.id)).toBe(true);
+    expect(ids.has(users.manager2.id)).toBe(true);
     expect(ids.has(users.rep.id)).toBe(true);
     expect(ids.has(users.rep2.id)).toBe(true);
-    expect(body.length).toBe(2);
+    expect(body.length).toBe(4);
   });
 
   it("response rows match expected shape; idle rep has zero activity", async () => {
@@ -203,5 +209,17 @@ describe("activity compliance logic (getActivityComplianceRows)", () => {
     });
     const repRow = rows.find((r) => r.userId === users.rep.id);
     expect(repRow?.lastActivityAt?.getTime()).toBe(newer.getTime());
+  });
+
+  it("manager logic view includes manager row and excludes unrelated team", async () => {
+    const rows = await getActivityComplianceRows({
+      viewer: { id: users.manager.id, role: UserRole.MANAGER },
+      now: COMPLIANCE_NOW,
+    });
+    const ids = new Set(rows.map((r) => r.userId));
+    expect(ids.has(users.manager.id)).toBe(true);
+    expect(ids.has(users.rep.id)).toBe(true);
+    expect(ids.has(users.manager2.id)).toBe(false);
+    expect(ids.has(users.rep2.id)).toBe(false);
   });
 });
