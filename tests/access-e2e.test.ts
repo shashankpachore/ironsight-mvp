@@ -22,11 +22,11 @@ describe("access control e2e", () => {
     expect(res.status).toBe(200);
   });
 
-  it("header ignored in non-test env", async () => {
-    const previous = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+  it("header ignored when TEST_MODE is disabled", async () => {
+    const previous = process.env.TEST_MODE;
+    process.env.TEST_MODE = "false";
     const res = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.admin.id }));
-    process.env.NODE_ENV = previous;
+    process.env.TEST_MODE = previous;
     expect(res.status).toBe(401);
   });
 

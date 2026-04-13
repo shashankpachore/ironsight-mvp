@@ -1,6 +1,7 @@
 import { AuditAction, AuditEntityType, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { validateDealCreationAccess } from "@/lib/account-access";
+import { buildDealWhere } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { sortDealsByDisplayOrder } from "@/lib/deal-order";
@@ -55,17 +56,7 @@ export async function GET(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
 
-  let where = {};
-  if (user.role === UserRole.REP) {
-    where = { account: { assignedToId: user.id } };
-  } else if (user.role === UserRole.MANAGER) {
-    const reports = await prisma.user.findMany({
-      where: { managerId: user.id, role: UserRole.REP },
-      select: { id: true },
-    });
-    const assigneeIds = [user.id, ...reports.map((report) => report.id)];
-    where = { account: { assignedToId: { in: assigneeIds } } };
-  }
+  const where = await buildDealWhere(user);
 
   const deals = await prisma.deal.findMany({
     where,

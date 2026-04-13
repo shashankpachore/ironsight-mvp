@@ -1,5 +1,5 @@
-import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { canAccessAssignedToId } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { getMissingSignals } from "@/lib/deals";
 import { prisma } from "@/lib/prisma";
@@ -17,7 +17,8 @@ export async function GET(
     include: { account: true },
   });
   if (!deal) return NextResponse.json({ error: "deal not found" }, { status: 404 });
-  if (user.role === UserRole.REP && deal.account.assignedToId !== user.id) {
+  const canRead = await canAccessAssignedToId(user, deal.account.assignedToId);
+  if (!canRead) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const missingSignals = await getMissingSignals(id);

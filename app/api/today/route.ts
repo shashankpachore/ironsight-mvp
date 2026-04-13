@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Outcome, UserRole } from "@prisma/client";
+import { buildDealWhere, getAccessibleUserIds } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { addDaysYmd, formatYmdInIST, istYmdToUtcStart } from "@/lib/ist-time";
 import { prisma } from "@/lib/prisma";
@@ -97,39 +98,30 @@ export async function GET(request: Request) {
   const todayMinusTwoStart = istYmdToUtcStart(addDaysYmd(todayYmd, -2));
   const upcomingEnd = istYmdToUtcStart(addDaysYmd(todayYmd, 2));
 
-  let ownerIds = [user.id];
-  let repDirectory = new Map<string, { name: string; email: string }>();
+  const assigneeIds = await getAccessibleUserIds(user);
+  let assigneeDirectory = new Map<string, { name: string; email: string }>();
   if (user.role === UserRole.MANAGER) {
     const reps = await prisma.user.findMany({
       where: { managerId: user.id, role: UserRole.REP },
       select: { id: true, name: true, email: true },
     });
-    ownerIds = reps.map((rep) => rep.id);
-    repDirectory = new Map(reps.map((rep) => [rep.id, { name: rep.name, email: rep.email }]));
+    assigneeDirectory = new Map([
+      [user.id, { name: user.name, email: user.email }],
+      ...reps.map((rep) => [rep.id, { name: rep.name, email: rep.email }] as const),
+    ]);
   }
 
-  if (ownerIds.length === 0 && user.role === UserRole.MANAGER) {
-    const empty: ManagerTodayResponse = {
-      mode: "MANAGER",
-      reps: [],
-      selectedRepId: null,
-      drilldown: { critical: [], attention: [] },
-    };
-    return NextResponse.json(empty);
-  }
+  const where = await buildDealWhere(user);
+  where.nextStepDate = { not: null };
 
   const deals = await prisma.deal.findMany({
-    where: {
-      ownerId: { in: ownerIds },
-      nextStepDate: { not: null },
-    },
+    where,
     select: {
       id: true,
-      ownerId: true,
       lastActivityAt: true,
       nextStepType: true,
       nextStepDate: true,
-      account: { select: { name: true } },
+      account: { select: { name: true, assignedToId: true } },
     },
   });
 
@@ -163,7 +155,7 @@ export async function GET(request: Request) {
       const daysOverdue = diffDaysFloor(todayStart, nextStepStart);
       return {
         dealId: deal.id,
-        ownerId: deal.ownerId,
+        assigneeId: deal.account.assignedToId,
         accountName: deal.account.name,
         nextStepType: deal.nextStepType,
         nextStepDate: deal.nextStepDate!.toISOString(),
@@ -175,7 +167,7 @@ export async function GET(request: Request) {
 
   if (user.role !== UserRole.MANAGER) {
     const buckets = classify(
-      activeItems.map(({ ownerId: _ownerId, ...item }) => item),
+      activeItems.map(({ assigneeId: _assigneeId, ...item }) => item),
       todayStart,
       todayMinusTwoStart,
       upcomingEnd,
@@ -186,13 +178,14 @@ export async function GET(request: Request) {
 
   const byRep = new Map<string, TodayItem[]>();
   for (const item of activeItems) {
-    const arr = byRep.get(item.ownerId) ?? [];
-    const { ownerId: _ownerId, ...rest } = item;
+    if (!item.assigneeId) continue;
+    const arr = byRep.get(item.assigneeId) ?? [];
+    const { assigneeId: _assigneeId, ...rest } = item;
     arr.push(rest);
-    byRep.set(item.ownerId, arr);
+    byRep.set(item.assigneeId, arr);
   }
 
-  const reps: ManagerRepSummary[] = ownerIds.map((repId) => {
+  const reps: ManagerRepSummary[] = (assigneeIds ?? []).map((repId) => {
     const items = byRep.get(repId) ?? [];
     const buckets = classify(items, todayStart, todayMinusTwoStart, upcomingEnd);
     const maxDays = items.length ? Math.max(...items.map((item) => item.daysSinceLastActivity)) : 0;
@@ -203,7 +196,7 @@ export async function GET(request: Request) {
       : stale || buckets.attention.length > 0
         ? "YELLOW"
         : "GREEN";
-    const repMeta = repDirectory.get(repId);
+    const repMeta = assigneeDirectory.get(repId);
     return {
       repId,
       repName: repMeta?.name ?? "Unknown",
@@ -218,7 +211,7 @@ export async function GET(request: Request) {
   reps.sort((a, b) => colorOrder(a.color) - colorOrder(b.color));
 
   const targetRepId =
-    selectedRepId && ownerIds.includes(selectedRepId)
+    selectedRepId && (assigneeIds ?? []).includes(selectedRepId)
       ? selectedRepId
       : reps[0]?.repId ?? null;
   const drillItems = targetRepId ? byRep.get(targetRepId) ?? [] : [];

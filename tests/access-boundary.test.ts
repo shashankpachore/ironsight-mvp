@@ -113,6 +113,32 @@ describe("access boundary and role enforcement", () => {
     expect(res.status).toBe(403);
   });
 
+  it("MANAGER cannot drill down to non-team rep in /api/today", async () => {
+    await createAssignedDeal({
+      adminId: users.admin.id,
+      ownerId: users.rep.id,
+      normalized: "boundary-rep1-manager-drill",
+    });
+    await createAssignedDeal({
+      adminId: users.admin.id,
+      ownerId: users.rep2.id,
+      normalized: "boundary-rep2-manager-drill",
+    });
+
+    const res = await getTodayRoute(
+      makeRequest(`http://localhost/api/today?repId=${users.rep2.id}`, { userId: users.manager.id }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      mode: "MANAGER";
+      selectedRepId: string | null;
+      drilldown: { critical: Array<{ dealId: string }>; attention: Array<{ dealId: string }> };
+    };
+    expect(body.mode).toBe("MANAGER");
+    expect(body.selectedRepId).not.toBe(users.rep2.id);
+    expect([users.manager.id, users.rep.id]).toContain(body.selectedRepId);
+  });
+
   it("MANAGER can view compliance but cannot perform admin-only user creation", async () => {
     const complianceRes = await getComplianceRoute(
       makeRequest("http://localhost/api/activity/compliance", { userId: users.manager.id }),

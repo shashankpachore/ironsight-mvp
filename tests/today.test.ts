@@ -142,9 +142,14 @@ describe("today api", () => {
         managerId: users.manager.id,
       },
     });
+    const managerOwn = (await createAssignedDealForUser({ ownerId: users.manager.id, adminId: users.admin.id, label: "MgrOwn" })).id;
     const repCritical = (await createAssignedDealForUser({ ownerId: users.rep.id, adminId: users.admin.id, label: "MgrRepCritical" })).id;
     const repYellow = (await createAssignedDealForUser({ ownerId: repThree.id, adminId: users.admin.id, label: "MgrRepYellow" })).id;
 
+    await prisma.deal.update({
+      where: { id: managerOwn },
+      data: { nextStepDate: dayOffset(-3), lastActivityAt: dayOffset(-9), nextStepType: "FOLLOW_UP" },
+    });
     await prisma.deal.update({
       where: { id: repCritical },
       data: { nextStepDate: dayOffset(-4), lastActivityAt: dayOffset(-11), nextStepType: "FOLLOW_UP" },
@@ -175,12 +180,12 @@ describe("today api", () => {
 
     expect(managerBody.mode).toBe("MANAGER");
     expect(managerBody.reps.length).toBeGreaterThanOrEqual(1);
-    expect(managerBody.reps[0].repId).toBe(users.rep.id);
-    expect(managerBody.reps[0].color).toBe("RED");
-    expect(managerBody.reps[0].hasCritical).toBe(true);
-    expect(managerBody.reps[0].stale).toBe(true);
+    expect(managerBody.reps.some((rep) => rep.repId === users.manager.id)).toBe(true);
+    const repSummary = managerBody.reps.find((rep) => rep.repId === users.rep.id);
+    expect(repSummary?.color).toBe("RED");
+    expect(repSummary?.hasCritical).toBe(true);
+    expect(repSummary?.stale).toBe(true);
     expect(managerBody.reps.some((rep) => rep.repId === repThree.id && rep.color === "YELLOW")).toBe(true);
-    expect(managerBody.drilldown.critical.map((x) => x.dealId)).toContain(repCritical);
 
     const drillRes = await getTodayRoute(
       makeRequest(`http://localhost/api/today?repId=${repThree.id}`, { userId: users.manager.id }),
@@ -194,5 +199,65 @@ describe("today api", () => {
     expect(drillBody.mode).toBe("MANAGER");
     expect(drillBody.selectedRepId).toBe(repThree.id);
     expect(drillBody.drilldown.attention.map((x) => x.dealId)).toContain(repYellow);
+
+    const repDrillRes = await getTodayRoute(
+      makeRequest(`http://localhost/api/today?repId=${users.rep.id}`, { userId: users.manager.id }),
+    );
+    expect(repDrillRes.status).toBe(200);
+    const repDrillBody = await json<{
+      mode: "MANAGER";
+      selectedRepId: string | null;
+      drilldown: { critical: Array<{ dealId: string }>; attention: Array<{ dealId: string }> };
+    }>(repDrillRes);
+    expect(repDrillBody.selectedRepId).toBe(users.rep.id);
+    expect(repDrillBody.drilldown.critical.map((x) => x.dealId)).toContain(repCritical);
+
+    const managerOwnRes = await getTodayRoute(
+      makeRequest(`http://localhost/api/today?repId=${users.manager.id}`, { userId: users.manager.id }),
+    );
+    expect(managerOwnRes.status).toBe(200);
+    const managerOwnBody = await json<{
+      mode: "MANAGER";
+      selectedRepId: string | null;
+      drilldown: { critical: Array<{ dealId: string }>; attention: Array<{ dealId: string }> };
+    }>(managerOwnRes);
+    expect(managerOwnBody.selectedRepId).toBe(users.manager.id);
+    expect(managerOwnBody.drilldown.critical.map((x) => x.dealId)).toContain(managerOwn);
+  });
+
+  it("admin sees unrestricted deals in today buckets", async () => {
+    const repDeal = (await createAssignedDealForUser({ ownerId: users.rep.id, adminId: users.admin.id, label: "AdminRep" })).id;
+    const rep2Deal = (await createAssignedDealForUser({ ownerId: users.rep2.id, adminId: users.admin.id, label: "AdminRep2" })).id;
+    const mgrDeal = (await createAssignedDealForUser({ ownerId: users.manager.id, adminId: users.admin.id, label: "AdminMgr" })).id;
+
+    await prisma.deal.update({
+      where: { id: repDeal },
+      data: { nextStepDate: dayOffset(-4), lastActivityAt: dayOffset(-8), nextStepType: "FOLLOW_UP" },
+    });
+    await prisma.deal.update({
+      where: { id: rep2Deal },
+      data: { nextStepDate: dayOffset(-3), lastActivityAt: dayOffset(-9), nextStepType: "FOLLOW_UP" },
+    });
+    await prisma.deal.update({
+      where: { id: mgrDeal },
+      data: { nextStepDate: dayOffset(-2), lastActivityAt: dayOffset(-7), nextStepType: "FOLLOW_UP" },
+    });
+
+    const res = await getTodayRoute(makeRequest("http://localhost/api/today", { userId: users.admin.id }));
+    expect(res.status).toBe(200);
+    const body = await json<{
+      mode: "REP";
+      critical: Array<{ dealId: string }>;
+      attention: Array<{ dealId: string }>;
+      upcoming: Array<{ dealId: string }>;
+    }>(res);
+    const visible = new Set([
+      ...body.critical.map((d) => d.dealId),
+      ...body.attention.map((d) => d.dealId),
+      ...body.upcoming.map((d) => d.dealId),
+    ]);
+    expect(visible.has(repDeal)).toBe(true);
+    expect(visible.has(rep2Deal)).toBe(true);
+    expect(visible.has(mgrDeal)).toBe(true);
   });
 });

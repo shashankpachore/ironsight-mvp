@@ -1,5 +1,6 @@
 import { AuditAction, AuditEntityType, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { assertDealAccess, canAccessAssignedToId } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/authz";
@@ -26,7 +27,8 @@ export async function GET(
   });
 
   if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-  if (user.role === UserRole.REP && deal.account.assignedToId !== user.id) {
+  const canRead = await canAccessAssignedToId(user, deal.account.assignedToId);
+  if (!canRead) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
@@ -46,22 +48,15 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
 
   const { id } = await params;
-  const before = await prisma.deal.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      value: true,
-      ownerId: true,
-      owner: { select: { managerId: true } },
-    },
-  });
-  if (!before) return NextResponse.json({ error: "deal not found" }, { status: 404 });
-
-  const canEdit =
-    user.role === UserRole.ADMIN ||
-    before.ownerId === user.id ||
-    (user.role === UserRole.MANAGER && before.owner.managerId === user.id);
-  if (!canEdit) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  let before;
+  try {
+    before = await assertDealAccess(user, id);
+  } catch (error) {
+    if (error instanceof Error && error.message === "ACCESS_DENIED") {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    throw error;
+  }
 
   const body = (await request.json()) as { value?: unknown };
   if (body.value === undefined) {

@@ -1,5 +1,6 @@
 import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { buildAccountWhere } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -13,17 +14,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  let where = {};
-  if (user.role === UserRole.REP) {
-    where = { assignedToId: user.id };
-  } else if (user.role === UserRole.MANAGER) {
-    const reps = await prisma.user.findMany({
-      where: { managerId: user.id, role: UserRole.REP },
-      select: { id: true },
-    });
-    const teamIds = [user.id, ...reps.map((rep) => rep.id)];
-    where = { assignedToId: { in: teamIds } };
-  }
+  const where = await buildAccountWhere(user);
 
   const accounts = await prisma.account.findMany({
     where,

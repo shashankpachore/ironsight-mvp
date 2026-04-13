@@ -1,5 +1,6 @@
 import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { buildDealWhere } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { getDealStage } from "@/lib/deals";
 import { prisma } from "@/lib/prisma";
@@ -33,20 +34,17 @@ export async function GET(request: Request) {
   const includeRepBreakdown =
     new URL(request.url).searchParams.get("includeRepBreakdown") === "1";
 
-  let assigneeIds: string[] | null = null;
   let managerReports: Array<{ id: string; name: string; email: string }> = [];
-  if (user.role === UserRole.REP) {
-    assigneeIds = [user.id];
-  } else if (user.role === UserRole.MANAGER) {
+  const where = await buildDealWhere(user);
+  if (user.role === UserRole.MANAGER) {
     managerReports = await prisma.user.findMany({
-      where: { managerId: user.id },
+      where: { managerId: user.id, role: UserRole.REP },
       select: { id: true, name: true, email: true },
     });
-    assigneeIds = [user.id, ...managerReports.map((report) => report.id)];
   }
 
   const deals = await prisma.deal.findMany({
-    where: assigneeIds ? { account: { assignedToId: { in: assigneeIds } } } : {},
+    where,
     select: { id: true, value: true, account: { select: { assignedToId: true } } },
   });
 

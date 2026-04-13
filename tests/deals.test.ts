@@ -95,14 +95,14 @@ describe("deals api - integrity and misuse coverage", () => {
     expect(rows.every((d) => d.accountId === repAccount)).toBe(true);
   });
 
-  it("manager sees all deals", async () => {
+  it("manager sees only team deals", async () => {
     const a1 = await prepAssignedAccount(users.rep.id);
     const a2 = await prepAssignedAccount(users.rep2.id);
     await createDeal({ byUserId: users.rep.id, name: "D1", value: 10, accountId: a1 });
     await createDeal({ byUserId: users.rep2.id, name: "D2", value: 11, accountId: a2 });
     const res = await getDealsRoute(makeRequest("http://localhost/api/deals", { userId: users.manager.id }));
     const rows = await json<unknown[]>(res);
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(1);
   });
 
   it("rep forbidden from reading unassigned deal by id", async () => {
@@ -115,14 +115,14 @@ describe("deals api - integrity and misuse coverage", () => {
     expect(res.status).toBe(403);
   });
 
-  it("manager can read any deal by id", async () => {
+  it("manager cannot read non-team deal by id", async () => {
     const accountId = await prepAssignedAccount(users.rep2.id);
     const deal = await json<{ id: string }>(await createDeal({ byUserId: users.rep2.id, name: "Visible", value: 99, accountId }));
     const res = await getDealByIdRoute(
       makeRequest(`http://localhost/api/deals/${deal.id}`, { userId: users.manager.id }),
       { params: Promise.resolve({ id: deal.id }) },
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
   });
 
   it("deal creation fails for non-existent account", async () => {
