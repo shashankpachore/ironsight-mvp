@@ -49,13 +49,13 @@ describe("accounts e2e", () => {
     expect(b.status).toBe(201);
   });
 
-  it("assign account by admin and manager works", async () => {
+  it("assign account is admin-only", async () => {
     const acc = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("Assign") }));
     await approveAccount({ byUserId: users.admin.id, accountId: acc.id });
     const a1 = await assignAccount({ byUserId: users.admin.id, accountId: acc.id, assigneeId: users.rep.id });
     const a2 = await assignAccount({ byUserId: users.manager.id, accountId: acc.id, assigneeId: users.rep2.id });
     expect(a1.status).toBe(200);
-    expect(a2.status).toBe(200);
+    expect(a2.status).toBe(403);
   });
 
   it("rep cannot assign", async () => {

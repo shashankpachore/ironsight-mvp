@@ -111,7 +111,7 @@ describe("adversarial full-suite: gaming, integrity, abuse", () => {
   });
 
   it("11) logging after unassignment blocked", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId: repAccountId, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: repAccountId, assigneeId: users.rep2.id });
     const res = await logInteraction({ byUserId: users.rep.id, dealId: repDealId, outcome: Outcome.FOLLOW_UP_DONE });
     expect(res.status).toBe(403);
   });

@@ -1,7 +1,8 @@
 import { AccountStatus, AuditAction, AuditEntityType, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { getCurrentUser, hasRole } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { requireRole } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(
@@ -9,10 +10,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const user = await getCurrentUser(request);
-  if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
-  if (!hasRole(user.role, [UserRole.ADMIN, UserRole.MANAGER])) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  const authzError = requireRole(user, [UserRole.ADMIN]);
+  if (authzError) return authzError;
 
   const body = (await request.json()) as { userId?: string };
   if (!body?.userId) return NextResponse.json({ error: "userId required" }, { status: 400 });

@@ -45,7 +45,7 @@ describe("role change mutation tests", () => {
     expect(deals.length).toBeGreaterThan(0);
   });
 
-  it("REP -> MANAGER can assign accounts", async () => {
+  it("REP -> MANAGER cannot assign accounts", async () => {
     await userPATCH(
       makeRequest(`http://localhost/api/users/${users.rep.id}`, {
         method: "PATCH",
@@ -59,7 +59,7 @@ describe("role change mutation tests", () => {
     );
     await approveAccount({ byUserId: users.admin.id, accountId: acc.id });
     const assign = await assignAccount({ byUserId: users.rep.id, accountId: acc.id, assigneeId: users.rep2.id });
-    expect(assign.status).toBe(200);
+    expect(assign.status).toBe(403);
   });
 
   it("MANAGER -> REP loses user-management visibility", async () => {

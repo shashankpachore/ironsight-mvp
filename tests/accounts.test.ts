@@ -130,11 +130,11 @@ describe("accounts api - adversarial + permissions", () => {
     expect(body.assignedToId).toBe(users.rep2.id);
   });
 
-  it("manager can assign approved account", async () => {
+  it("manager cannot assign approved account", async () => {
     const created = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("AssignMgr") }));
     await approveAccount({ byUserId: users.admin.id, accountId: created.id });
     const res = await assignAccount({ byUserId: users.manager.id, accountId: created.id, assigneeId: users.rep2.id });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
   });
 
   it("rep cannot assign account", async () => {
@@ -239,7 +239,7 @@ describe("accounts api - adversarial + permissions", () => {
   it("assign updates persisted assignee linkage", async () => {
     const created = await json<{ id: string }>(await createAccount({ byUserId: users.rep.id, name: uniqueName("PersistAssign") }));
     await approveAccount({ byUserId: users.admin.id, accountId: created.id });
-    await assignAccount({ byUserId: users.manager.id, accountId: created.id, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: created.id, assigneeId: users.rep2.id });
     const db = await getAccount(created.id);
     expect(db?.assignedToId).toBe(users.rep2.id);
   });

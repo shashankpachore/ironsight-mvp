@@ -61,7 +61,7 @@ describe("ownership integrity under mutations", () => {
   });
 
   it("logs endpoint enforces updated ownership boundaries", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
     await logsPOST(
       makeRequest("http://localhost/api/logs", {
         method: "POST",

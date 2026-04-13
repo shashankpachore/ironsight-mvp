@@ -29,14 +29,14 @@ describe("account reassignment effects", () => {
   });
 
   it("REP B gains deal access immediately after reassignment", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
     const res = await dealsGET(makeRequest("http://localhost/api/deals", { userId: users.rep2.id }));
     const rows = (await res.json()) as Array<{ id: string }>;
     expect(rows.some((d) => d.id === dealId)).toBe(true);
   });
 
   it("existing deals remain valid after reassignment", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
     const deal = await prisma.deal.findUnique({ where: { id: dealId } });
     expect(deal?.accountId).toBe(accountId);
   });

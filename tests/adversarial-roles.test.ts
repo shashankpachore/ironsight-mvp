@@ -28,8 +28,8 @@ describe("adversarial role mutation scenarios", () => {
     ).id;
   });
 
-  it("manager can reassign account to themselves and shift effective execution access", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.manager.id });
+  it("admin can reassign account to manager and shift effective execution access", async () => {
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.manager.id });
     const res = await logsPOST(
       makeRequest("http://localhost/api/logs", {
         method: "POST",
@@ -50,7 +50,7 @@ describe("adversarial role mutation scenarios", () => {
   it("rapid reassignment loops keep a single assignee (no split-brain)", async () => {
     for (let i = 0; i < 10; i++) {
       await assignAccount({
-        byUserId: users.manager.id,
+        byUserId: users.admin.id,
         accountId,
         assigneeId: i % 2 === 0 ? users.rep.id : users.rep2.id,
       });
@@ -129,13 +129,13 @@ describe("adversarial role mutation scenarios", () => {
     expect(del.status).toBe(409);
   });
 
-  it("manager pipeline shifts when self-assigning active accounts", async () => {
+  it("manager pipeline shifts when admin assigns active accounts to manager", async () => {
     const beforeRes = await pipelineGET(
       makeRequest("http://localhost/api/pipeline", { userId: users.manager.id }),
     );
     const before = (await beforeRes.json()) as Record<string, { count: number }>;
     const beforeCount = Object.values(before).reduce((sum, s) => sum + s.count, 0);
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.manager.id });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.manager.id });
     const afterRes = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.manager.id }));
     const after = (await afterRes.json()) as Record<string, { count: number }>;
     const afterCount = Object.values(after).reduce((sum, s) => sum + s.count, 0);

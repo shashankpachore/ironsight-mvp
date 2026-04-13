@@ -85,12 +85,12 @@ describe("access control - critical permission boundaries", () => {
     expect(res.status).toBe(403);
   });
 
-  it("manager can assign account", async () => {
+  it("manager cannot assign account", async () => {
     const res = await assignRoute(
       makeRequest("http://localhost/api/accounts/assign", { method: "POST", userId: users.manager.id, body: { userId: users.rep2.id } }),
       { params: Promise.resolve({ id: approvedAccountId }) },
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
   });
 
   it("admin can assign account", async () => {

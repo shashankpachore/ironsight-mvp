@@ -20,7 +20,7 @@ describe("role mutation behavior", () => {
     await createDeal({ byUserId: users.rep.id, accountId, value: 100, name: PRODUCT_OPTIONS[0] });
   });
 
-  it("REP -> MANAGER retains existing deal ownership and can assign", async () => {
+  it("REP -> MANAGER retains existing deal ownership but cannot assign", async () => {
     const beforeDeals = await prisma.deal.findMany({ where: { ownerId: users.rep.id } });
     await userPATCH(
       makeRequest(`http://localhost/api/users/${users.rep.id}`, { method: "PATCH", userId: users.admin.id, body: { role: UserRole.MANAGER } }),
@@ -32,7 +32,7 @@ describe("role mutation behavior", () => {
     const acc2 = await json<{ id: string }>(await createAccount({ byUserId: users.admin.id, name: uniqueName("PromAssign") }));
     await approveAccount({ byUserId: users.admin.id, accountId: acc2.id });
     const assign = await assignAccount({ byUserId: users.rep.id, accountId: acc2.id, assigneeId: users.rep2.id });
-    expect(assign.status).toBe(200);
+    expect(assign.status).toBe(403);
   });
 
   it("MANAGER -> REP loses user API access but retains own pipeline visibility", async () => {

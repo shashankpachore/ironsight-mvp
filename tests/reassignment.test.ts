@@ -66,14 +66,14 @@ describe("manager/account reassignment stress tests", () => {
   });
 
   it("account reassignment REP A -> REP B grants new rep access", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
     const repDeals = await dealsGET(makeRequest("http://localhost/api/deals", { userId: users.rep2.id }));
     const rows = (await repDeals.json()) as Array<{ id: string }>;
     expect(rows.some((r) => r.id === dealId)).toBe(true);
   });
 
   it("existing deals remain valid after account reassignment", async () => {
-    await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: users.rep2.id });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
     const deal = await prisma.deal.findUnique({ where: { id: dealId } });
     expect(deal).toBeTruthy();
     expect(deal?.accountId).toBe(accountId);
@@ -100,7 +100,7 @@ describe("manager/account reassignment stress tests", () => {
 
   it("deal stage endpoint remains consistent during reassignment loops", async () => {
     for (let i = 0; i < 5; i++) {
-      await assignAccount({ byUserId: users.manager.id, accountId, assigneeId: i % 2 ? users.rep.id : users.rep2.id });
+      await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: i % 2 ? users.rep.id : users.rep2.id });
     }
     const stage = await dealStageGET(
       makeRequest(`http://localhost/api/deals/${dealId}/stage`, { userId: users.rep2.id }),
