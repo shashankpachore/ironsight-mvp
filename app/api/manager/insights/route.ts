@@ -134,6 +134,9 @@ export async function GET(request: Request) {
   const user = await getCurrentUser(request);
   const authz = requireRole(user, [UserRole.MANAGER, UserRole.ADMIN]);
   if (authz) return authz;
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const where = await buildDealWhere(user);
 
