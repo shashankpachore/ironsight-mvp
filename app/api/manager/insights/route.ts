@@ -11,7 +11,7 @@ type AtRiskDeal = {
   dealId: string;
   accountName: string;
   ownerName: string;
-  stage: "EVALUATION" | "COMMITTED";
+  stage: string;
   value: number;
   daysSinceLastActivity: number;
   reason: string;
@@ -114,7 +114,7 @@ function repColor(params: {
 }
 
 function suggestAction(params: {
-  stage: "EVALUATION" | "COMMITTED";
+  stage: string;
   daysSinceLastActivity: number;
   hasProposalShared: boolean;
 }): string {
