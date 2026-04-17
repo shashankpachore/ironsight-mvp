@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { PRODUCT_OPTIONS } from "@/lib/products";
 import { useTestSession } from "./test-session-bar";
 
-type Account = {
+type SearchAccount = {
   id: string;
   name: string;
 };
@@ -13,27 +13,92 @@ type Account = {
 export function CreateDealForm() {
   const router = useRouter();
   const { header } = useTestSession();
+  const headerRef = useRef(header);
+  headerRef.current = header;
+
   const [form, setForm] = useState({ name: PRODUCT_OPTIONS[0], accountId: "", value: "" });
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountQuery, setAccountQuery] = useState("");
+  const [accountResults, setAccountResults] = useState<SearchAccount[]>([]);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [accountSearchCompleted, setAccountSearchCompleted] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadAccounts() {
-    const res = await fetch("/api/accounts", {
-      headers: header,
-    });
-    const data = await res.json();
-    if (res.ok) setAccounts(data);
-  }
+  const accountPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!accountPickerRef.current?.contains(e.target as Node)) {
+        setAccountDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
+
+  useEffect(() => {
+    const trimmed = accountQuery.trim();
+    if (trimmed.length < 2) {
+      setAccountResults([]);
+      setAccountLoading(false);
+      setAccountDropdownOpen(false);
+      setAccountSearchCompleted(false);
+      return;
+    }
+
+    setAccountDropdownOpen(true);
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setAccountLoading(true);
+      setAccountSearchCompleted(false);
+      try {
+        const params = new URLSearchParams({ q: trimmed, limit: "20" });
+        const res = await fetch(`/api/accounts/search?${params.toString()}`, {
+          headers: headerRef.current,
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as { accounts?: SearchAccount[] };
+        if (cancelled) return;
+        if (!res.ok) {
+          setAccountResults([]);
+          return;
+        }
+        setAccountResults(Array.isArray(data.accounts) ? data.accounts : []);
+      } catch (e) {
+        if (cancelled) return;
+        if ((e as Error).name === "AbortError") return;
+        setAccountResults([]);
+      } finally {
+        if (!cancelled) {
+          setAccountLoading(false);
+          setAccountSearchCompleted(true);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller.abort();
+      setAccountLoading(false);
+    };
+  }, [accountQuery]);
 
   async function createDeal(e: FormEvent) {
     e.preventDefault();
     setError("");
 
+    if (!form.accountId) {
+      setError("Select an approved account");
+      return;
+    }
+
     const res = await fetch("/api/deals", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...header,
+        ...headerRef.current,
       },
       body: JSON.stringify({
         name: form.name,
@@ -49,19 +114,16 @@ export function CreateDealForm() {
     }
 
     setForm({ name: PRODUCT_OPTIONS[0], accountId: "", value: "" });
+    setAccountQuery("");
+    setAccountResults([]);
+    setAccountDropdownOpen(false);
+    setAccountSearchCompleted(false);
     router.refresh();
   }
 
   return (
     <>
       <form onSubmit={createDeal} className="grid gap-3 md:grid-cols-4">
-        <button
-          type="button"
-          className="rounded border px-4 py-2 text-sm md:col-span-4"
-          onClick={() => void loadAccounts()}
-        >
-          Load Approved Accounts
-        </button>
         <select
           className="border rounded px-3 py-2"
           value={form.name}
@@ -77,24 +139,50 @@ export function CreateDealForm() {
             </option>
           ))}
         </select>
-        <select
-          className="border rounded px-3 py-2"
-          value={form.accountId}
-          onChange={(e) => setForm((s) => ({ ...s, accountId: e.target.value }))}
-          required
-        >
-          <option value="">Select approved account</option>
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.name}
-            </option>
-          ))}
-        </select>
-        {accounts.length === 0 ? (
-          <p className="text-sm text-gray-600 md:col-span-4">
-            No assigned approved accounts available
-          </p>
-        ) : null}
+        <div ref={accountPickerRef} className="relative">
+          <input
+            type="text"
+            className="w-full border rounded px-3 py-2"
+            placeholder="Search account (min 2 characters)"
+            value={accountQuery}
+            onChange={(e) => {
+              setAccountQuery(e.target.value);
+              setForm((s) => ({ ...s, accountId: "" }));
+            }}
+            onFocus={() => {
+              if (accountQuery.trim().length >= 2) setAccountDropdownOpen(true);
+            }}
+            autoComplete="off"
+            aria-autocomplete="list"
+            aria-expanded={accountDropdownOpen}
+          />
+          {accountDropdownOpen ? (
+            <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded border bg-white shadow">
+              {accountLoading ? (
+                <div className="px-3 py-2 text-sm text-gray-600">Loading…</div>
+              ) : accountSearchCompleted && accountResults.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-gray-600">No results</div>
+              ) : (
+                accountResults.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100"
+                    onMouseDown={(ev) => ev.preventDefault()}
+                    onClick={() => {
+                      setForm((s) => ({ ...s, accountId: account.id }));
+                      setAccountQuery(account.name);
+                      setAccountDropdownOpen(false);
+                      setAccountLoading(false);
+                    }}
+                  >
+                    {account.name}
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
         <input
           className="border rounded px-3 py-2"
           placeholder="Deal Value in ₹"

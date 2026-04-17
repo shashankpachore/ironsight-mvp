@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Outcome, StakeholderType } from "@prisma/client";
 import { GET as pipelineGET } from "../app/api/pipeline/route";
+import { GET as managerBreakdownGET } from "../app/api/pipeline/manager-breakdown/route";
 import { approveAccount, assignAccount, createAccount, createDeal, json, logInteraction, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { prisma } from "../lib/prisma";
@@ -11,6 +12,7 @@ function totalCount(p: Record<string, { count: number }>) {
 function totalValue(p: Record<string, { value: number }>) {
   return Object.values(p).reduce((sum, row) => sum + row.value, 0);
 }
+const STAGES = ["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED"] as const;
 
 describe("pipeline aggregation consistency under mutations", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;
@@ -83,5 +85,48 @@ describe("pipeline aggregation consistency under mutations", () => {
   it("invalid user session gets 401 and no aggregation leak", async () => {
     const res = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: "bad-user" }));
     expect(res.status).toBe(401);
+  });
+
+  it("admin manager-breakdown stage/value totals reconcile with admin total pipeline", async () => {
+    await prisma.user.update({ where: { id: users.rep.id }, data: { managerId: users.manager.id } });
+    await prisma.user.update({ where: { id: users.rep2.id }, data: { managerId: users.manager2.id } });
+
+    const unassigned = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("PipeCUnassigned") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: unassigned.id });
+    await prisma.deal.create({
+      data: {
+        name: PRODUCT_OPTIONS[0],
+        companyName: "Unassigned Co",
+        value: 500,
+        ownerId: users.admin.id,
+        accountId: unassigned.id,
+      },
+    });
+
+    const totalRes = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.admin.id }));
+    const totals = (await totalRes.json()) as Record<string, { count: number; value: number }>;
+    expect(totalRes.status).toBe(200);
+
+    const breakdownRes = await managerBreakdownGET(
+      makeRequest("http://localhost/api/pipeline/manager-breakdown", { userId: users.admin.id }),
+    );
+    const rows = (await breakdownRes.json()) as Array<{
+      managerId: string;
+      stages: Record<(typeof STAGES)[number], { count: number; value: number }>;
+      totalValue: number;
+    }>;
+    expect(breakdownRes.status).toBe(200);
+
+    const breakdownCountTotal = STAGES.reduce(
+      (sum, stage) => sum + rows.reduce((rowSum, row) => rowSum + row.stages[stage].count, 0),
+      0,
+    );
+    const breakdownValueTotal = rows.reduce((sum, row) => sum + row.totalValue, 0);
+
+    expect(breakdownCountTotal).toBe(totalCount(totals));
+    expect(breakdownValueTotal).toBe(totalValue(totals));
+    expect(rows.some((row) => row.managerId === "UNASSIGNED")).toBe(true);
   });
 });

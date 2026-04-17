@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { cookies, headers } from "next/headers";
 import { CreateDealForm } from "@/components/create-deal-form";
+import { DealsListSearch } from "@/components/deals-list-search";
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
-import { formatInr } from "@/lib/currency";
 import { sortDealsByDisplayOrder } from "@/lib/deal-order";
 import { prisma } from "@/lib/prisma";
 
@@ -71,56 +70,7 @@ export default async function Home() {
       <section className="border rounded-lg p-4">
         <h2 className="font-medium mb-3">Deals</h2>
         {loadError ? <p className="text-sm text-red-600 mb-2">{loadError}</p> : null}
-        <div className="space-y-3">
-          {activeDeals.map((deal) => (
-            <Link
-              href={`/deals/${deal.id}`}
-              key={deal.id}
-              className="block border rounded p-3 hover:bg-gray-50"
-            >
-              <p className="text-lg font-semibold">{deal.account.name}</p>
-              <p className="text-sm text-gray-700">Product: {deal.name}</p>
-              <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
-              <p className="text-sm">Stage: {deal.stage}</p>
-              <p className="text-sm">
-                Last activity: {deal.lastActivityAtLabel}
-              </p>
-              <p className="text-sm">
-                Missing:{" "}
-                {deal.missingSignals.length
-                  ? deal.missingSignals.join(", ")
-                  : "None"}
-              </p>
-            </Link>
-          ))}
-          {activeDeals.length > 0 && closedDeals.length > 0 ? (
-            <div className="pt-2 border-t">
-              <p className="text-sm font-medium text-gray-700">Closed Deals</p>
-            </div>
-          ) : null}
-          {closedDeals.map((deal) => (
-            <Link
-              href={`/deals/${deal.id}`}
-              key={deal.id}
-              className="block border rounded p-3 hover:bg-gray-50"
-            >
-              <p className="text-lg font-semibold">{deal.account.name}</p>
-              <p className="text-sm text-gray-700">Product: {deal.name}</p>
-              <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
-              <p className="text-sm">Stage: {deal.stage}</p>
-              <p className="text-sm">
-                Last activity: {deal.lastActivityAtLabel}
-              </p>
-              <p className="text-sm">
-                Missing:{" "}
-                {deal.missingSignals.length
-                  ? deal.missingSignals.join(", ")
-                  : "None"}
-              </p>
-            </Link>
-          ))}
-          {sortedDeals.length === 0 ? <p>No deals yet.</p> : null}
-        </div>
+        <DealsListSearch activeDeals={activeDeals} closedDeals={closedDeals} />
       </section>
     </main>
   );

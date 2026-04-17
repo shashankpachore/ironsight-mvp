@@ -26,7 +26,8 @@ type Scenario = {
   key: string;
   outcomes: Outcome[];
   lastActivityAtDaysAgo?: number;
-  expectedStage: "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED" | "CLOSED";
+  logsDaysAgo?: number;
+  expectedStage: "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED" | "CLOSED" | "LOST";
   expectedMissingSignals?: string[];
 };
 
@@ -84,6 +85,7 @@ const scenarios: Scenario[] = [
     key: "stale-deal-no-activity",
     outcomes: [Outcome.MET_INFLUENCER],
     lastActivityAtDaysAgo: 8,
+    logsDaysAgo: 8,
     expectedStage: "ACCESS",
     expectedMissingSignals: [
       "Missing Decision Maker",
@@ -122,7 +124,7 @@ const scenarios: Scenario[] = [
       Outcome.NEGOTIATION_STARTED,
       Outcome.BUDGET_NOT_AVAILABLE,
     ],
-    expectedStage: "ACCESS",
+    expectedStage: "LOST",
     expectedMissingSignals: ["Missing Decision Maker", "Missing Budget Discussion"],
   },
   {
@@ -137,9 +139,10 @@ const scenarios: Scenario[] = [
   },
 ];
 
-function primeLogs(outcomes: Outcome[]) {
+function primeLogs(outcomes: Outcome[], daysAgo = 0) {
+  const createdAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
   prismaMock.interactionLog.findMany.mockResolvedValue(
-    outcomes.map((outcome) => ({ outcome })),
+    outcomes.map((outcome) => ({ outcome, createdAt })),
   );
 }
 
@@ -154,7 +157,7 @@ describe("adversarial stage + missing signal matrix (10 scenarios)", () => {
   });
 
   it.each(scenarios)("scenario: $key", async (scenario) => {
-    primeLogs(scenario.outcomes);
+    primeLogs(scenario.outcomes, scenario.logsDaysAgo ?? 0);
     primeDeal(scenario.lastActivityAtDaysAgo ?? 0);
 
     const stage = await getDealStage(`deal-${scenario.key}`);
@@ -240,7 +243,7 @@ describe("critical adversarial checks", () => {
   });
 
   it("F. STALE DEAL: 7+ day inactivity should be flagged", async () => {
-    primeLogs([Outcome.MET_DECISION_MAKER, Outcome.BUDGET_DISCUSSED]);
+    primeLogs([Outcome.MET_DECISION_MAKER, Outcome.BUDGET_DISCUSSED], 8);
     primeDeal(8);
     const missingSignals = await getMissingSignals("stale-deal");
     expect(missingSignals).toContain("No Recent Activity (7 days)");

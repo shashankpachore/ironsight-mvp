@@ -25,7 +25,19 @@ export async function getDealStage(dealId: string): Promise<DealStage> {
   const hasNegativeOutcome =
     outcomes.has(Outcome.DEAL_DROPPED) || outcomes.has(Outcome.LOST_TO_COMPETITOR);
 
-  if (hasNegativeOutcome) return "ACCESS";
+  if (hasNegativeOutcome) {
+    if (outcomes.has(Outcome.BUDGET_NOT_AVAILABLE)) {
+      return "LOST";
+    }
+    const hasPositiveProgress =
+      hasDecisionMaker ||
+      hasBudgetDiscussed ||
+      hasProposalShared ||
+      hasDealConfirmed ||
+      hasPoReceived ||
+      EVALUATION_OUTCOMES.some((outcome) => outcomes.has(outcome));
+    return hasPositiveProgress ? "ACCESS" : "LOST";
+  }
 
   if (hasDealConfirmed && hasPoReceived) return "CLOSED";
 
@@ -42,23 +54,33 @@ export async function getDealStage(dealId: string): Promise<DealStage> {
   return "ACCESS";
 }
 
-export async function getMissingSignals(dealId: string): Promise<string[]> {
-  const [deal, logs] = await Promise.all([
+type MissingSignalLogInput = {
+  createdAt: Date | string;
+  outcome: Outcome;
+};
+
+export async function getMissingSignals(
+  dealId: string,
+  logs?: MissingSignalLogInput[],
+): Promise<string[]> {
+  const [deal, fetchedLogs] = await Promise.all([
     prisma.deal.findUnique({
       where: { id: dealId },
       select: { lastActivityAt: true },
     }),
-    prisma.interactionLog.findMany({
-      where: { dealId },
-      select: { outcome: true },
-    }),
+    logs
+      ? Promise.resolve<MissingSignalLogInput[]>(logs)
+      : prisma.interactionLog.findMany({
+          where: { dealId },
+          select: { createdAt: true, outcome: true },
+        }),
   ]);
 
   if (!deal) {
     return [];
   }
 
-  const outcomes = new Set(logs.map((log) => log.outcome));
+  const outcomes = new Set(fetchedLogs.map((log) => log.outcome));
   const missing: string[] = [];
 
   if (!outcomes.has(Outcome.MET_DECISION_MAKER)) {
@@ -71,8 +93,15 @@ export async function getMissingSignals(dealId: string): Promise<string[]> {
     missing.push("Missing Proposal");
   }
 
+  const latestLogAt =
+    fetchedLogs.length > 0
+      ? new Date(
+          Math.max(...fetchedLogs.map((log) => new Date(log.createdAt).getTime())),
+        )
+      : null;
+  const lastActivityAt = latestLogAt ?? deal.lastActivityAt;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  if (deal.lastActivityAt < sevenDaysAgo) {
+  if (lastActivityAt < sevenDaysAgo) {
     missing.push("No Recent Activity (7 days)");
   }
 

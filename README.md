@@ -16,10 +16,10 @@ npm install
 cp .env.example .env
 ```
 
-3. Run database migrations:
+3. Run initial database migration:
 
 ```bash
-npx prisma migrate dev
+npx prisma migrate dev --name init
 ```
 
 4. Seed demo data (optional, recommended):
@@ -41,6 +41,30 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+## Safe Schema Evolution (Prisma)
+
+Use migrations as the source of truth for schema changes.
+
+- Initial setup for a fresh local database:
+
+```bash
+npx prisma migrate dev --name init
+```
+
+- For every schema change:
+
+```bash
+npx prisma migrate dev --name <change_name>
+```
+
+- In production:
+
+```bash
+npx prisma migrate deploy
+```
+
+- Never run `prisma db push` in production. In this project, `db push` is only used for local dev/test SQLite workflows.
 
 ## API Endpoints
 

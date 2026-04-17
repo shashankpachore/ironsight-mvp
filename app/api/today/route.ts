@@ -3,7 +3,9 @@ import { Outcome, UserRole } from "@prisma/client";
 import { buildDealWhere, getAccessibleUserIds } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { addDaysYmd, formatYmdInIST, istYmdToUtcStart } from "@/lib/ist-time";
+import { getDealMomentum } from "@/lib/momentum";
 import { prisma } from "@/lib/prisma";
+import { scoreDeal } from "@/lib/ranking";
 
 type TodayItem = {
   dealId: string;
@@ -13,6 +15,9 @@ type TodayItem = {
   lastActivityAt: string;
   daysSinceLastActivity: number;
   daysOverdue: number;
+  score: number;
+  actionMessage: string;
+  reason: string;
 };
 
 type RepTodayResponse = {
@@ -40,6 +45,7 @@ type ManagerTodayResponse = {
   drilldown: {
     critical: TodayItem[];
     attention: TodayItem[];
+    upcoming: TodayItem[];
   };
 };
 
@@ -58,24 +64,32 @@ function isInactiveFromOutcomes(outcomes: Outcome[]): boolean {
 
 function classify(items: TodayItem[], todayStart: Date, todayMinusTwoStart: Date, upcomingEnd: Date) {
   const critical = items
-    .filter(
-      (item) =>
-        istYmdToUtcStart(formatYmdInIST(new Date(item.nextStepDate))) < todayMinusTwoStart ||
-        item.daysSinceLastActivity >= 10,
-    )
-    .sort((a, b) => b.daysOverdue - a.daysOverdue || b.daysSinceLastActivity - a.daysSinceLastActivity);
+    .filter((item) => item.reason === "Overdue or inactive too long")
+    .sort(
+      (a, b) =>
+        b.score - a.score || b.daysOverdue - a.daysOverdue || b.daysSinceLastActivity - a.daysSinceLastActivity,
+    );
 
   const criticalIds = new Set(critical.map((item) => item.dealId));
   const attention = items
-    .filter((item) => !criticalIds.has(item.dealId) && item.daysSinceLastActivity >= 7)
-    .sort((a, b) => b.daysSinceLastActivity - a.daysSinceLastActivity);
+    .filter(
+      (item) =>
+        !criticalIds.has(item.dealId) &&
+        (item.reason === "Deal may lose momentum" || item.reason === "No recent activity"),
+    )
+    .sort((a, b) => b.score - a.score || b.daysSinceLastActivity - a.daysSinceLastActivity);
 
+  const attentionIds = new Set(attention.map((item) => item.dealId));
   const upcoming = items
+    .filter((item) => !criticalIds.has(item.dealId) && !attentionIds.has(item.dealId))
     .filter((item) => {
       const nextStep = istYmdToUtcStart(formatYmdInIST(new Date(item.nextStepDate)));
       return nextStep >= todayStart && nextStep <= upcomingEnd;
     })
-    .sort((a, b) => new Date(a.nextStepDate).getTime() - new Date(b.nextStepDate).getTime());
+    .sort(
+      (a, b) =>
+        b.score - a.score || new Date(a.nextStepDate).getTime() - new Date(b.nextStepDate).getTime(),
+    );
 
   return { critical, attention, upcoming };
 }
@@ -84,6 +98,11 @@ function colorOrder(color: "RED" | "YELLOW" | "GREEN"): number {
   if (color === "RED") return 0;
   if (color === "YELLOW") return 1;
   return 2;
+}
+
+function getOnTrackActionMessage(nextStepType: string | null): string {
+  if (!nextStepType) return "Execute next action";
+  return `Execute ${nextStepType.replaceAll("_", " ").toLowerCase()}`;
 }
 
 export async function GET(request: Request) {
@@ -118,6 +137,7 @@ export async function GET(request: Request) {
     where,
     select: {
       id: true,
+      value: true,
       lastActivityAt: true,
       nextStepType: true,
       nextStepDate: true,
@@ -134,7 +154,7 @@ export async function GET(request: Request) {
     }),
     prisma.interactionLog.findMany({
       where: { dealId: { in: dealIds } },
-      select: { dealId: true, outcome: true },
+      select: { dealId: true, outcome: true, createdAt: true },
     }),
   ]);
   const latestLogByDeal = new Map(latestLogs.map((row) => [row.dealId, row._max.createdAt]));
@@ -144,15 +164,41 @@ export async function GET(request: Request) {
     arr.push(row.outcome);
     outcomesByDeal.set(row.dealId, arr);
   }
+  const logsByDeal = new Map<string, Array<{ createdAt: Date; outcome: Outcome }>>();
+  for (const row of outcomes) {
+    const arr = logsByDeal.get(row.dealId) ?? [];
+    arr.push({ createdAt: row.createdAt, outcome: row.outcome });
+    logsByDeal.set(row.dealId, arr);
+  }
 
   const activeItems = deals
     .filter((deal) => !isInactiveFromOutcomes(outcomesByDeal.get(deal.id) ?? []))
     .map((deal) => {
       const latestLog = latestLogByDeal.get(deal.id) ?? deal.lastActivityAt;
+      const momentum = getDealMomentum(
+        { lastActivityAt: deal.lastActivityAt, nextStepDate: deal.nextStepDate },
+        logsByDeal.get(deal.id) ?? [],
+      );
       const nextStepStart = istYmdToUtcStart(formatYmdInIST(deal.nextStepDate!));
-      const lastActivityStart = istYmdToUtcStart(formatYmdInIST(latestLog));
-      const daysSinceLastActivity = diffDaysFloor(todayStart, lastActivityStart);
+      const daysSinceLastActivity = momentum.daysSinceLastActivity;
       const daysOverdue = diffDaysFloor(todayStart, nextStepStart);
+      const { score } = scoreDeal(
+        { value: deal.value, nextStepDate: deal.nextStepDate },
+        momentum,
+        { todayStartUtc: todayStart, upcomingEndUtc: upcomingEnd },
+      );
+      let actionMessage = getOnTrackActionMessage(deal.nextStepType);
+      let reason = "On track";
+      if (momentum.momentumStatus === "CRITICAL") {
+        actionMessage = "Follow up immediately";
+        reason = "Overdue or inactive too long";
+      } else if (momentum.momentumStatus === "AT_RISK") {
+        actionMessage = "Follow up on deal";
+        reason = "Deal may lose momentum";
+      } else if (momentum.momentumStatus === "STALE") {
+        actionMessage = "Reconnect";
+        reason = "No recent activity";
+      }
       return {
         dealId: deal.id,
         assigneeId: deal.account.assignedToId,
@@ -162,6 +208,9 @@ export async function GET(request: Request) {
         lastActivityAt: latestLog.toISOString(),
         daysSinceLastActivity,
         daysOverdue,
+        score,
+        actionMessage,
+        reason,
       };
     });
 
@@ -224,6 +273,7 @@ export async function GET(request: Request) {
     drilldown: {
       critical: drillBuckets.critical,
       attention: drillBuckets.attention,
+      upcoming: drillBuckets.upcoming,
     },
   };
   return NextResponse.json(response);

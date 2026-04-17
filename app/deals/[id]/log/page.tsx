@@ -126,20 +126,6 @@ export default function LogInteractionPage({
       <h1 className="text-xl font-semibold mb-4">Log Interaction</h1>
       <form onSubmit={onSubmit} className="border rounded-lg p-4 space-y-4">
         <div>
-          <label className="block text-sm mb-1">Interaction Type</label>
-          <select
-            className="w-full border rounded px-3 py-2"
-            value={interactionType}
-            onChange={(e) => setInteractionType(e.target.value as (typeof INTERACTION_TYPES)[number])}
-          >
-            {INTERACTION_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
           <label className="block text-sm mb-1">Outcome</label>
           <select
             className="w-full border rounded px-3 py-2"
@@ -160,6 +146,53 @@ export default function LogInteractionPage({
               </optgroup>
             ))}
           </select>
+        </div>
+
+        <div className="border rounded p-3 space-y-3 bg-gray-50">
+          <p className="text-sm font-medium">Next step (required)</p>
+          <p className="text-xs text-gray-500">Suggested based on outcome</p>
+          <div>
+            <label className="block text-sm mb-1">Next step</label>
+            <select
+              className="w-full border rounded px-3 py-2 bg-white"
+              value={nextStepType}
+              disabled={outcome === "PO_RECEIVED"}
+              onChange={(e) => {
+                setNextStepType(e.target.value as NextStepTypeValue | "");
+                setNextStepManuallyChanged(true);
+              }}
+            >
+              <option value="">Select next step</option>
+              {NEXT_STEP_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Date</label>
+            <input
+              type="date"
+              className="w-full border rounded px-3 py-2 bg-white"
+              value={nextStepDateYmd}
+              disabled={outcome === "PO_RECEIVED"}
+              required
+              onChange={(e) => {
+                setNextStepDateYmd(e.target.value);
+                setNextStepManuallyChanged(true);
+              }}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm mb-1">Notes (optional)</label>
+          <textarea
+            className="w-full border rounded px-3 py-2"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
         </div>
         <div>
           <label className="block text-sm mb-1">Stakeholder</label>
@@ -201,51 +234,6 @@ export default function LogInteractionPage({
             ))}
           </div>
           <p className="mt-2 text-xs text-gray-500">Suggested based on outcome</p>
-        </div>
-        <div className="border rounded p-3 space-y-3 bg-gray-50">
-          <p className="text-sm font-medium">Next step (required)</p>
-          <p className="text-xs text-gray-500">Suggested based on outcome</p>
-          <div>
-            <label className="block text-sm mb-1">Next step</label>
-            <select
-              className="w-full border rounded px-3 py-2 bg-white"
-              value={nextStepType}
-              disabled={outcome === "PO_RECEIVED"}
-              onChange={(e) => {
-                setNextStepType(e.target.value as NextStepTypeValue | "");
-                setNextStepManuallyChanged(true);
-              }}
-            >
-              <option value="">Select next step</option>
-              {NEXT_STEP_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Date</label>
-            <input
-              type="date"
-              className="w-full border rounded px-3 py-2 bg-white"
-              value={nextStepDateYmd}
-              disabled={outcome === "PO_RECEIVED"}
-              required
-              onChange={(e) => {
-                setNextStepDateYmd(e.target.value);
-                setNextStepManuallyChanged(true);
-              }}
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm mb-1">Notes (optional)</label>
-          <textarea
-            className="w-full border rounded px-3 py-2"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
         </div>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <button

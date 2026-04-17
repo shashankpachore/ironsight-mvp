@@ -5,8 +5,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { getDealStage } from "@/lib/deals";
 import { prisma } from "@/lib/prisma";
 
-type StageKey = "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED" | "CLOSED";
+type StageKey = "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED";
 type PipelineShape = Record<StageKey, { count: number; value: number }>;
+type TerminalStageKey = "CLOSED" | "LOST";
+type TerminalOutcomesShape = Record<TerminalStageKey, { count: number; value: number }>;
 
 function emptyPipeline() {
   const pipeline: PipelineShape = {
@@ -14,7 +16,6 @@ function emptyPipeline() {
     QUALIFIED: { count: 0, value: 0 },
     EVALUATION: { count: 0, value: 0 },
     COMMITTED: { count: 0, value: 0 },
-    CLOSED: { count: 0, value: 0 },
   };
   return pipeline;
 }
@@ -28,11 +29,27 @@ function accumulatePipeline(
   pipeline[stage].value += value;
 }
 
+function emptyTerminalOutcomes(): TerminalOutcomesShape {
+  return {
+    CLOSED: { count: 0, value: 0 },
+    LOST: { count: 0, value: 0 },
+  };
+}
+
+function isTerminalStage(stage: string): stage is TerminalStageKey {
+  return stage === "CLOSED" || stage === "LOST";
+}
+
+function isPipelineStage(stage: string): stage is StageKey {
+  return stage === "ACCESS" || stage === "QUALIFIED" || stage === "EVALUATION" || stage === "COMMITTED";
+}
+
 export async function GET(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
-  const includeRepBreakdown =
-    new URL(request.url).searchParams.get("includeRepBreakdown") === "1";
+  const url = new URL(request.url);
+  const includeRepBreakdown = url.searchParams.get("includeRepBreakdown") === "1";
+  const includeOutcomes = url.searchParams.get("includeOutcomes") === "1";
 
   let managerReports: Array<{ id: string; name: string; email: string }> = [];
   const where = await buildDealWhere(user);
@@ -49,17 +66,27 @@ export async function GET(request: Request) {
   });
 
   const pipeline = emptyPipeline();
+  const outcomes = emptyTerminalOutcomes();
   const dealStages = await Promise.all(
     deals.map(async (deal) => ({
       deal,
-      stage: (await getDealStage(deal.id)) as StageKey,
+      stage: await getDealStage(deal.id),
     })),
   );
   dealStages.forEach(({ deal, stage }) => {
-    accumulatePipeline(pipeline, stage, deal.value);
+    if (isPipelineStage(stage)) {
+      accumulatePipeline(pipeline, stage, deal.value);
+      return;
+    }
+    if (!isTerminalStage(stage)) return;
+    outcomes[stage].count += 1;
+    outcomes[stage].value += deal.value;
   });
 
   if (!(includeRepBreakdown && user.role === UserRole.MANAGER)) {
+    if (includeOutcomes) {
+      return NextResponse.json({ totals: pipeline, outcomes });
+    }
     return NextResponse.json(pipeline);
   }
 
@@ -67,6 +94,7 @@ export async function GET(request: Request) {
     managerReports.map((report) => [report.id, emptyPipeline()]),
   );
   dealStages.forEach(({ deal, stage }) => {
+    if (!isPipelineStage(stage)) return;
     const assignedToId = deal.account.assignedToId;
     if (!assignedToId) return;
     const reportPipeline = reportPipelineById.get(assignedToId);
@@ -83,6 +111,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     totals: pipeline,
+    outcomes,
     repPipelines,
   });
 }

@@ -155,4 +155,5 @@ export type DealStage =
   | "QUALIFIED"
   | "EVALUATION"
   | "COMMITTED"
-  | "CLOSED";
+  | "CLOSED"
+  | "LOST";

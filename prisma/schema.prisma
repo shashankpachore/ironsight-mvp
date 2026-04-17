@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,6 +5,88 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String     @id @default(cuid())
+  name              String
+  email             String     @unique
+  password          String
+  role              UserRole
+  managerId         String?
+  assignedAccounts  Account[]  @relation("AssignedAccounts")
+  createdAccounts   Account[]  @relation("CreatedAccounts")
+  requestedAccounts Account[]  @relation("AccountRequestedBy")
+  auditLogsChanged  AuditLog[] @relation("ChangedByUser")
+  deals             Deal[]
+  manager           User?      @relation("ManagerReports", fields: [managerId], references: [id])
+  reports           User[]     @relation("ManagerReports")
+}
+
+model Account {
+  id            String        @id @default(cuid())
+  name          String
+  normalized    String        @unique
+  type          AccountType   @default(SCHOOL)
+  state         String        @default("UNKNOWN")
+  district      String        @default("UNKNOWN")
+  createdById   String
+  assignedToId  String?
+  status        AccountStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  requestedById String?
+  assignedTo    User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id])
+  createdBy     User          @relation("CreatedAccounts", fields: [createdById], references: [id])
+  requestedBy   User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id])
+  deals         Deal[]
+}
+
+model Deal {
+  id             String           @id @default(cuid())
+  name           String
+  companyName    String
+  value          Float
+  accountId      String
+  ownerId        String
+  createdAt      DateTime         @default(now())
+  lastActivityAt DateTime         @default(now())
+  nextStepDate   DateTime?
+  nextStepSource String?
+  nextStepType   String?
+  account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  logs           InteractionLog[]
+}
+
+model InteractionLog {
+  id              String            @id @default(cuid())
+  dealId          String
+  interactionType InteractionType
+  outcome         Outcome
+  stakeholderType StakeholderType
+  notes           String?
+  createdAt       DateTime          @default(now())
+  deal            Deal              @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  risks           InteractionRisk[]
+}
+
+model InteractionRisk {
+  id       String         @id @default(cuid())
+  logId    String
+  category RiskCategory
+  log      InteractionLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String          @id @default(cuid())
+  entityType  AuditEntityType
+  entityId    String
+  action      AuditAction
+  changedById String
+  before      Json?
+  after       Json?
+  createdAt   DateTime        @default(now())
+  changedBy   User            @relation("ChangedByUser", fields: [changedById], references: [id], onDelete: Cascade)
 }
 
 enum UserRole {
@@ -89,86 +166,4 @@ enum RiskCategory {
   FEATURE_GAP
   CHAMPION_NOT_STRONG
   INTERNAL_ALIGNMENT_MISSING
-}
-
-model User {
-  id                String    @id @default(cuid())
-  name              String
-  email             String    @unique
-  password          String
-  role              UserRole
-  managerId         String?
-  manager           User?     @relation("ManagerReports", fields: [managerId], references: [id])
-  reports           User[]    @relation("ManagerReports")
-  deals             Deal[]
-  createdAccounts   Account[] @relation("CreatedAccounts")
-  assignedAccounts  Account[] @relation("AssignedAccounts")
-  requestedAccounts Account[] @relation("AccountRequestedBy")
-  auditLogsChanged  AuditLog[] @relation("ChangedByUser")
-}
-
-model Account {
-  id           String        @id @default(cuid())
-  name         String
-  normalized   String        @unique
-  type         AccountType   @default(SCHOOL)
-  state        String        @default("UNKNOWN")
-  district     String        @default("UNKNOWN")
-  createdById    String
-  requestedById  String?
-  assignedToId   String?
-  status         AccountStatus @default(PENDING)
-  createdAt      DateTime      @default(now())
-  createdBy      User          @relation("CreatedAccounts", fields: [createdById], references: [id])
-  requestedBy    User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
-  assignedTo     User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id])
-  deals          Deal[]
-}
-
-model Deal {
-  id             String           @id @default(cuid())
-  name           String
-  companyName    String
-  value          Float
-  accountId      String
-  ownerId        String
-  owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  createdAt      DateTime         @default(now())
-  lastActivityAt DateTime         @default(now())
-  nextStepType   String?
-  nextStepDate   DateTime?
-  nextStepSource String?
-  logs           InteractionLog[]
-}
-
-model InteractionLog {
-  id              String          @id @default(cuid())
-  dealId          String
-  deal            Deal            @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  interactionType InteractionType
-  outcome         Outcome
-  stakeholderType StakeholderType
-  risks           InteractionRisk[]
-  notes           String?
-  createdAt       DateTime        @default(now())
-}
-
-model InteractionRisk {
-  id       String       @id @default(cuid())
-  logId    String
-  log      InteractionLog @relation(fields: [logId], references: [id], onDelete: Cascade)
-  category RiskCategory
-}
-
-model AuditLog {
-  id          String          @id @default(cuid())
-  entityType  AuditEntityType
-  entityId    String
-  action      AuditAction
-  changedById String
-  changedBy   User            @relation("ChangedByUser", fields: [changedById], references: [id], onDelete: Cascade)
-  before      Json?
-  after       Json?
-  createdAt   DateTime        @default(now())
 }

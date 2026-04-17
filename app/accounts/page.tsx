@@ -10,6 +10,7 @@ type Account = {
   id: string;
   name: string;
   type?: "SCHOOL" | "PARTNER";
+  normalized?: string;
   state?: string;
   district?: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
@@ -74,6 +75,7 @@ export default function AccountsPage() {
   }, [accounts]);
   const [importPreview, setImportPreview] = useState<ImportPreviewRow[]>([]);
   const [importSummary, setImportSummary] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   async function loadAll() {
     const accountsUrl = isRep ? "/api/accounts" : "/api/accounts?includeAll=1";
@@ -219,6 +221,27 @@ export default function AccountsPage() {
   const nameLabel = requestType === "PARTNER" ? "Partner Name" : "School Name";
   const formValid =
     requestType && name.trim().length > 0 && district.trim().length > 0 && requestState.trim().length > 0;
+  const needsAssignment = [...accounts].filter(
+    (account) => account.status === "APPROVED" && !account.assignedToId,
+  );
+  const searchQueryNormalized = searchQuery.trim().toLowerCase();
+  const searchEnabled = searchQueryNormalized.length >= 2;
+  const searchResults = searchEnabled
+    ? accounts
+        .filter((account) => {
+          const nameMatch = account.name.toLowerCase().includes(searchQueryNormalized);
+          const normalizedMatch = (account.normalized ?? "").includes(searchQueryNormalized);
+          return nameMatch || normalizedMatch;
+        })
+        .slice(0, 25)
+    : [];
+  const myPendingAccounts = accounts.filter((account) => account.status === "PENDING");
+  const myApprovedAccounts = accounts.filter(
+    (account) => account.status === "APPROVED" && !account.assignedToId,
+  );
+  const myAssignedAccounts = accounts.filter(
+    (account) => account.status === "APPROVED" && !!account.assignedToId,
+  );
 
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
@@ -369,60 +392,6 @@ export default function AccountsPage() {
         {error ? <p className="text-sm text-red-600 mt-2">{error}</p> : null}
       </section>
 
-      <section className="border rounded-lg p-4">
-        <h2 className="font-medium mb-3">All Visible Accounts</h2>
-        <div className="space-y-2">
-          {accounts.map((account) => (
-            <div key={account.id} className="border rounded p-3 space-y-1">
-              <p className="font-medium">{account.name}</p>
-              <p className="text-sm">Type: {formatAccountType(account.type)}</p>
-              <p className="text-sm">District: {account.district ?? "—"}</p>
-              <p className="text-sm">State: {account.state ?? "—"}</p>
-              <p className="text-sm">Status: {formatAccountStatus(account)}</p>
-              <p className="text-sm text-gray-600">
-                Assigned: {account.assignedTo?.email ?? "Unassigned"}
-              </p>
-              {account.requestedById && currentUser?.id === account.requestedById ? (
-                <p className="text-xs text-gray-600">Requested by you</p>
-              ) : account.requestedBy ? (
-                <p className="text-xs text-gray-600">
-                  Requested by: {account.requestedBy.name} ({account.requestedBy.role})
-                </p>
-              ) : null}
-              {isAdmin && account.status === "APPROVED" ? (
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                  <select
-                    className="border rounded px-2 py-1 text-sm"
-                    value={assignUserByAccount[account.id] ?? ""}
-                    onChange={(e) =>
-                      setAssignUserByAccount((prev) => ({
-                        ...prev,
-                        [account.id]: e.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Assign user</option>
-                    {users.map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.email} ({user.role})
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="rounded border px-3 py-1 text-sm"
-                    type="button"
-                    onClick={() => assign(account.id)}
-                  >
-                    Assign
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ))}
-          {accounts.length === 0 ? <p>No accounts visible.</p> : null}
-        </div>
-      </section>
-
       {isAdmin ? (
         <section className="border rounded-lg p-4">
           <h2 className="font-medium mb-3">Pending Accounts (Admin)</h2>
@@ -479,6 +448,146 @@ export default function AccountsPage() {
           )}
         </section>
       ) : null}
+
+      {isAdmin ? (
+        <section className="border rounded-lg p-4">
+          <h2 className="font-medium mb-3">Needs Assignment</h2>
+          {needsAssignment.length === 0 ? (
+            <p className="text-sm text-gray-600">No approved unassigned accounts.</p>
+          ) : (
+            <div className="space-y-2">
+              {needsAssignment.map((account) => (
+                <div key={account.id} className="border rounded p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">{account.name}</p>
+                    <p className="text-xs text-gray-600">
+                      {account.district ?? "—"}, {account.state ?? "—"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      className="border rounded px-2 py-1 text-sm"
+                      value={assignUserByAccount[account.id] ?? ""}
+                      onChange={(e) =>
+                        setAssignUserByAccount((prev) => ({
+                          ...prev,
+                          [account.id]: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Assign user</option>
+                      {users.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.email} ({user.role})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="rounded border px-3 py-1 text-sm"
+                      type="button"
+                      onClick={() => assign(account.id)}
+                    >
+                      Assign
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {!isAdmin ? (
+        <section className="border rounded-lg p-4 space-y-4">
+          <h2 className="font-medium">My Accounts</h2>
+
+          <div>
+            <h3 className="text-sm font-medium mb-2">Pending</h3>
+            {myPendingAccounts.length === 0 ? (
+              <p className="text-sm text-gray-600">No pending accounts.</p>
+            ) : (
+              <div className="border rounded divide-y">
+                {myPendingAccounts.map((account) => (
+                  <div key={account.id} className="p-2 text-sm flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">{account.name}</p>
+                    <div className="text-xs text-gray-600 flex items-center gap-3">
+                      <span>{formatAccountStatus(account)}</span>
+                      {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium mb-2">Approved (Not Assigned)</h3>
+            {myApprovedAccounts.length === 0 ? (
+              <p className="text-sm text-gray-600">No approved unassigned accounts.</p>
+            ) : (
+              <div className="border rounded divide-y">
+                {myApprovedAccounts.map((account) => (
+                  <div key={account.id} className="p-2 text-sm flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">{account.name}</p>
+                    <div className="text-xs text-gray-600 flex items-center gap-3">
+                      <span>{formatAccountStatus(account)}</span>
+                      {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium mb-2">Assigned</h3>
+            {myAssignedAccounts.length === 0 ? (
+              <p className="text-sm text-gray-600">No assigned accounts.</p>
+            ) : (
+              <div className="border rounded divide-y">
+                {myAssignedAccounts.map((account) => (
+                  <div key={account.id} className="p-2 text-sm flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">{account.name}</p>
+                    <div className="text-xs text-gray-600 flex items-center gap-3">
+                      <span>{formatAccountStatus(account)}</span>
+                      {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="border rounded-lg p-4">
+        <h2 className="font-medium mb-3">All Accounts (Search)</h2>
+        <div className="space-y-3">
+          <input
+            className="border rounded px-3 py-2 w-full max-w-xl"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by account name..."
+          />
+          {!searchEnabled ? (
+            <p className="text-sm text-gray-600">Type to search accounts.</p>
+          ) : searchResults.length === 0 ? (
+            <p className="text-sm text-gray-600">No results found.</p>
+          ) : (
+            <div className="border rounded divide-y">
+              {searchResults.map((account) => (
+                <div key={account.id} className="p-2 text-sm flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium">{account.name}</p>
+                  <div className="text-xs text-gray-600 flex items-center gap-3">
+                    <span>{formatAccountStatus(account)}</span>
+                    {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
     </main>
   );
 }
