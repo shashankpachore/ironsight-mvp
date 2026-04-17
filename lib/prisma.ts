@@ -1,13 +1,12 @@
-const isPostgres = process.env.DATABASE_URL?.startsWith("postgresql")
+import { PrismaClient } from "@prisma/client";
 
-let PrismaClient
-
-if (process.env.TEST_MODE === "true") {
-  PrismaClient = require("@prisma/test-client").PrismaClient
-} else if (isPostgres) {
-  PrismaClient = require("@prisma/client").PrismaClient
-} else {
-  PrismaClient = require("@prisma/dev-client").PrismaClient
+declare global {
+  // eslint-disable-next-line no-var
+  var prisma: PrismaClient | undefined;
 }
 
-export const prisma = new PrismaClient()
+export const prisma = globalThis.prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalThis.prisma = prisma;
+}
