@@ -6,6 +6,10 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
   const user = await getCurrentUser(request);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const authzError = requireAdminSectionAccess(user);
   if (authzError) return authzError;
 
