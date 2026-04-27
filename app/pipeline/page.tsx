@@ -36,6 +36,7 @@ type ManagerBreakdownRow = {
   totalValue: number;
   outcomes: OutcomeSummary;
 };
+type TotalPipelineAccumulator = Omit<ManagerBreakdownRow, "managerId" | "managerName">;
 
 type PipelineResponse = PipelineTotals | {
   totals: PipelineTotals;
@@ -44,6 +45,7 @@ type PipelineResponse = PipelineTotals | {
 };
 type PipelineStage = keyof PipelineTotals;
 type DrilldownStage = PipelineStage | keyof OutcomeSummary;
+type DrilldownStageRequest = DrilldownStage | DrilldownStage[];
 const PIPELINE_STAGES: PipelineStage[] = ["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED"];
 const ZERO_STAGE_SUMMARY: StageSummary = { count: 0, value: 0 };
 type DrilldownDeal = {
@@ -114,7 +116,7 @@ export default function PipelinePage() {
     const state = drilldownByKey[key];
     return (
       <tr key={key}>
-        <td className="border p-2 bg-gray-50" colSpan={colSpan}>
+        <td className="border p-2 bg-gray-50 text-center" colSpan={colSpan}>
           {!state || state.loading ? (
             <p className="text-sm text-gray-600">Loading deals...</p>
           ) : state.error ? (
@@ -124,7 +126,7 @@ export default function PipelinePage() {
           ) : (
             <div className="divide-y">
               {state.deals.map((deal, index) => (
-                <div key={deal.id} className="text-sm flex flex-wrap gap-4 py-2">
+                <div key={deal.id} className="text-sm flex flex-wrap justify-center gap-4 py-2">
                   <span className="w-8 shrink-0 text-gray-500">{index + 1}.</span>
                   <span className="font-medium">{deal.account.name}</span>
                   <span>{formatInr(deal.value)}</span>
@@ -144,7 +146,7 @@ export default function PipelinePage() {
 
   function renderDrilldownButton(params: {
     keyId: string;
-    stage: DrilldownStage;
+    stage: DrilldownStageRequest;
     filters?: DrilldownFilters;
     label: string;
   }) {
@@ -163,7 +165,7 @@ export default function PipelinePage() {
 
   async function toggleDrilldown(
     key: string,
-    stage: DrilldownStage,
+    stage: DrilldownStageRequest,
     filters?: DrilldownFilters,
   ) {
     if (expandedKey === key) {
@@ -176,7 +178,12 @@ export default function PipelinePage() {
       ...prev,
       [key]: { loading: true, error: "", deals: [] },
     }));
-    const params = new URLSearchParams({ stage });
+    const params = new URLSearchParams();
+    if (Array.isArray(stage)) {
+      params.set("stages", stage.join(","));
+    } else {
+      params.set("stage", stage);
+    }
     if (filters?.ownerId) params.set("ownerId", filters.ownerId);
     if (filters?.managerId) params.set("managerId", filters.managerId);
     if (filters?.unassigned) params.set("unassigned", "1");
@@ -212,10 +219,10 @@ export default function PipelinePage() {
         <table className="w-full border-collapse border text-sm">
           <thead>
             <tr>
-              <th className="border p-2 text-left">Stage</th>
-              <th className="border p-2 text-left">Count</th>
-              <th className="border p-2 text-left">Deal Value</th>
-              <th className="border p-2 text-left">Action</th>
+              <th className="border p-2 text-center">Stage</th>
+              <th className="border p-2 text-center">Count</th>
+              <th className="border p-2 text-center">Deal Value</th>
+              <th className="border p-2 text-center">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -224,10 +231,10 @@ export default function PipelinePage() {
               return (
                 <Fragment key={key}>
                   <tr>
-                    <td className="border p-2">{stage}</td>
-                    <td className="border p-2">{source[stage].count}</td>
-                    <td className="border p-2">{formatInr(source[stage].value)}</td>
-                    <td className="border p-2">
+                    <td className="border p-2 text-center">{stage}</td>
+                    <td className="border p-2 text-center">{source[stage].count}</td>
+                    <td className="border p-2 text-center">{formatInr(source[stage].value)}</td>
+                    <td className="border p-2 text-center">
                       {renderDrilldownButton({
                         keyId: key,
                         stage,
@@ -315,6 +322,108 @@ export default function PipelinePage() {
     return `${safe.count} deals / ${formatInr(safe.value)}`;
   }
 
+  function sumStageSummaries(...summaries: StageSummary[]): StageSummary {
+    return summaries.reduce(
+      (acc, summary) => ({
+        count: acc.count + summary.count,
+        value: acc.value + summary.value,
+      }),
+      { count: 0, value: 0 },
+    );
+  }
+
+  function renderStageCell(params: {
+    rowId: string;
+    stage: DrilldownStage;
+    summary: StageSummary;
+    filters?: DrilldownFilters;
+  }) {
+    const key = `${params.rowId}:${params.stage}`;
+    return (
+      <td className="border p-2 text-center align-top">
+        <div className="space-y-2">
+          <button
+            type="button"
+            className="font-semibold underline underline-offset-2 hover:text-gray-700"
+            onClick={() => void toggleDrilldown(key, params.stage, params.filters)}
+          >
+            {formatInr(params.summary.value)}
+          </button>
+          <div className="text-xs text-gray-500">{formatStageCell(params.summary)}</div>
+          {renderDrilldownButton({
+            keyId: key,
+            stage: params.stage,
+            filters: params.filters,
+            label: params.stage,
+          })}
+        </div>
+      </td>
+    );
+  }
+
+  function renderManagerPipelineRow(params: {
+    row: ManagerBreakdownRow;
+    rowId: string;
+    labelClassName?: string;
+    filters?: DrilldownFilters;
+  }) {
+    const { row, rowId, filters } = params;
+    return (
+      <tr>
+        <td className={`border p-2 text-center align-top ${params.labelClassName ?? ""}`}>{row.managerName}</td>
+        {renderStageCell({
+          rowId,
+          stage: "ACCESS",
+          summary: safeStageCell(row.stages, "ACCESS"),
+          filters,
+        })}
+        {renderStageCell({
+          rowId,
+          stage: "QUALIFIED",
+          summary: safeStageCell(row.stages, "QUALIFIED"),
+          filters,
+        })}
+        {renderStageCell({
+          rowId,
+          stage: "EVALUATION",
+          summary: safeStageCell(row.stages, "EVALUATION"),
+          filters,
+        })}
+        {renderStageCell({
+          rowId,
+          stage: "COMMITTED",
+          summary: safeStageCell(row.stages, "COMMITTED"),
+          filters,
+        })}
+        {renderStageCell({
+          rowId,
+          stage: "CLOSED",
+          summary: row.outcomes.CLOSED,
+          filters,
+        })}
+        {renderStageCell({
+          rowId,
+          stage: "LOST",
+          summary: row.outcomes.LOST,
+          filters,
+        })}
+      </tr>
+    );
+  }
+
+  function renderAdminDealDrilldowns(rowId: string, colSpan: number) {
+    return (
+      <>
+        {renderDealDrilldown(`${rowId}:ACCESS`, colSpan)}
+        {renderDealDrilldown(`${rowId}:QUALIFIED`, colSpan)}
+        {renderDealDrilldown(`${rowId}:EVALUATION`, colSpan)}
+        {renderDealDrilldown(`${rowId}:COMMITTED`, colSpan)}
+        {renderDealDrilldown(`${rowId}:CLOSED`, colSpan)}
+        {renderDealDrilldown(`${rowId}:LOST`, colSpan)}
+      </>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-4xl p-6 space-y-6">
       <div className="flex items-center gap-4 text-sm">
@@ -339,10 +448,10 @@ export default function PipelinePage() {
               <table className="w-full border-collapse border text-sm">
                 <thead>
                   <tr>
-                    <th className="border p-2 text-left">Stage</th>
-                    <th className="border p-2 text-left">Count</th>
-                    <th className="border p-2 text-left">Deal Value</th>
-                    <th className="border p-2 text-left">Action</th>
+                    <th className="border p-2 text-center">Stage</th>
+                    <th className="border p-2 text-center">Count</th>
+                    <th className="border p-2 text-center">Deal Value</th>
+                    <th className="border p-2 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -351,10 +460,10 @@ export default function PipelinePage() {
                     return (
                       <Fragment key={key}>
                         <tr>
-                          <td className="border p-2">{stage}</td>
-                          <td className="border p-2">{outcomes[stage].count}</td>
-                          <td className="border p-2">{formatInr(outcomes[stage].value)}</td>
-                          <td className="border p-2">
+                          <td className="border p-2 text-center">{stage}</td>
+                          <td className="border p-2 text-center">{outcomes[stage].count}</td>
+                          <td className="border p-2 text-center">{formatInr(outcomes[stage].value)}</td>
+                          <td className="border p-2 text-center">
                             {renderDrilldownButton({
                               keyId: key,
                               stage,
@@ -374,18 +483,23 @@ export default function PipelinePage() {
           {currentUser?.role === "ADMIN" ? (
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Pipeline by Manager</h2>
-              <table className="w-full border-collapse border text-sm">
-                <thead>
-                  <tr>
-                    <th className="border p-2 text-left">Manager Name</th>
-                    <th className="border p-2 text-left">ACCESS</th>
-                    <th className="border p-2 text-left">QUALIFIED</th>
-                    <th className="border p-2 text-left">EVALUATION</th>
-                    <th className="border p-2 text-left">COMMITTED</th>
-                    <th className="border p-2 text-left">Total Value</th>
-                    <th className="border p-2 text-left">Actions</th>
-                  </tr>
-                </thead>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1000px] border-collapse border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border p-2 text-center" rowSpan={2}>Manager</th>
+                      <th className="border p-2 text-center" colSpan={2}>Early Funnel</th>
+                      <th className="border p-2 text-center" colSpan={2}>Mid Stage</th>
+                      <th className="border p-2 text-center" rowSpan={2}>Closed Success</th>
+                      <th className="border p-2 text-center" rowSpan={2}>Lost</th>
+                    </tr>
+                    <tr>
+                      <th className="border p-2 text-center text-xs font-normal text-gray-500">Access</th>
+                      <th className="border p-2 text-center text-xs font-normal text-gray-500">Qualified</th>
+                      <th className="border p-2 text-center text-xs font-normal text-gray-500">Evaluation</th>
+                      <th className="border p-2 text-center text-xs font-normal text-gray-500">Committed</th>
+                    </tr>
+                  </thead>
                 <tbody>
                   {(() => {
                     const unassignedRow =
@@ -393,7 +507,7 @@ export default function PipelinePage() {
                     const managerRows = managerBreakdown.filter(
                       (row) => row.managerId !== "UNASSIGNED",
                     );
-                    const totalRow = managerBreakdown.reduce(
+                    const totalRow = managerBreakdown.reduce<TotalPipelineAccumulator>(
                       (acc, row) => {
                         const next: Record<PipelineStage, StageSummary> = {
                           ACCESS: acc.stages.ACCESS,
@@ -408,6 +522,11 @@ export default function PipelinePage() {
                             value: next[stage].value + safe.value,
                           };
                         }
+                        const closed = sumStageSummaries(
+                          acc.outcomes.CLOSED,
+                          row.outcomes.CLOSED,
+                        );
+                        const lost = sumStageSummaries(acc.outcomes.LOST, row.outcomes.LOST);
                         return {
                           stages: next,
                           totalValue:
@@ -415,97 +534,64 @@ export default function PipelinePage() {
                             (typeof row.totalValue === "number" && Number.isFinite(row.totalValue)
                               ? row.totalValue
                               : 0),
+                          outcomes: { CLOSED: closed, LOST: lost },
                         };
                       },
                       {
                         stages: {
-                          ACCESS: ZERO_STAGE_SUMMARY,
-                          QUALIFIED: ZERO_STAGE_SUMMARY,
-                          EVALUATION: ZERO_STAGE_SUMMARY,
-                          COMMITTED: ZERO_STAGE_SUMMARY,
+                          ACCESS: { ...ZERO_STAGE_SUMMARY },
+                          QUALIFIED: { ...ZERO_STAGE_SUMMARY },
+                          EVALUATION: { ...ZERO_STAGE_SUMMARY },
+                          COMMITTED: { ...ZERO_STAGE_SUMMARY },
+                        },
+                        outcomes: {
+                          CLOSED: { ...ZERO_STAGE_SUMMARY },
+                          LOST: { ...ZERO_STAGE_SUMMARY },
                         },
                         totalValue: 0,
-                      } as { stages: Record<PipelineStage, StageSummary>; totalValue: number },
+                      },
                     );
                     return (
                       <>
+                        {renderManagerPipelineRow({
+                          row: {
+                            managerId: "TOTAL",
+                            managerName: "TOTAL PIPELINE",
+                            ...totalRow,
+                          },
+                          rowId: "total",
+                          labelClassName: "font-semibold",
+                        })}
+                        {renderAdminDealDrilldowns("total", 7)}
                         <tr>
-                          <td className="border p-2 font-semibold">TOTAL PIPELINE</td>
-                          <td className="border p-2">{formatStageCell(safeStageCell(totalRow.stages, "ACCESS"))}</td>
-                          <td className="border p-2">{formatStageCell(safeStageCell(totalRow.stages, "QUALIFIED"))}</td>
-                          <td className="border p-2">{formatStageCell(safeStageCell(totalRow.stages, "EVALUATION"))}</td>
-                          <td className="border p-2">{formatStageCell(safeStageCell(totalRow.stages, "COMMITTED"))}</td>
-                          <td className="border p-2">{formatInr(totalRow.totalValue)}</td>
-                          <td className="border p-2" />
-                        </tr>
-                        <tr>
-                          <td className="p-2" colSpan={7} />
+                          <td className="p-2 text-center" colSpan={7} />
                         </tr>
                         {managerRows.map((row) => (
                           <Fragment key={row.managerId}>
-                            <tr key={row.managerId}>
-                              <td className="border p-2">{row.managerName}</td>
-                              {PIPELINE_STAGES.map((stage) => {
-                                const key = `mgr:${row.managerId}:${stage}`;
-                                return (
-                                  <td
-                                    key={key}
-                                    className="border p-2"
-                                  >
-                                    <div className="space-y-1">
-                                      <div>{formatStageCell(safeStageCell(row.stages, stage))}</div>
-                                      {renderDrilldownButton({
-                                        keyId: key,
-                                        stage,
-                                        filters: { managerId: row.managerId },
-                                        label: `${row.managerName} ${stage}`,
-                                      })}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-                              <td className="border p-2">{formatInr(row.totalValue)}</td>
-                              <td className="border p-2 text-xs text-gray-500">Use stage buttons</td>
-                            </tr>
-                            {PIPELINE_STAGES.map((stage) => renderDealDrilldown(`mgr:${row.managerId}:${stage}`, 7))}
+                            {renderManagerPipelineRow({
+                              row,
+                              rowId: `mgr:${row.managerId}`,
+                              filters: { managerId: row.managerId },
+                            })}
+                            {renderAdminDealDrilldowns(`mgr:${row.managerId}`, 7)}
                           </Fragment>
                         ))}
                         {unassignedRow ? (
                           <Fragment key={unassignedRow.managerId}>
-                            <tr key={unassignedRow.managerId}>
-                              <td className="border p-2">{unassignedRow.managerName}</td>
-                              {PIPELINE_STAGES.map((stage) => {
-                                const key = `mgr:${unassignedRow.managerId}:${stage}`;
-                                return (
-                                  <td
-                                    key={key}
-                                    className="border p-2"
-                                  >
-                                    <div className="space-y-1">
-                                      <div>{formatStageCell(safeStageCell(unassignedRow.stages, stage))}</div>
-                                      {renderDrilldownButton({
-                                        keyId: key,
-                                        stage,
-                                        filters: { unassigned: true },
-                                        label: `${unassignedRow.managerName} ${stage}`,
-                                      })}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-                              <td className="border p-2">{formatInr(unassignedRow.totalValue)}</td>
-                              <td className="border p-2 text-xs text-gray-500">Use stage buttons</td>
-                            </tr>
-                            {PIPELINE_STAGES.map((stage) =>
-                              renderDealDrilldown(`mgr:${unassignedRow.managerId}:${stage}`, 7),
-                            )}
+                            {renderManagerPipelineRow({
+                              row: unassignedRow,
+                              rowId: "mgr:UNASSIGNED",
+                              filters: { unassigned: true },
+                            })}
+                            {renderAdminDealDrilldowns("mgr:UNASSIGNED", 7)}
                           </Fragment>
                         ) : null}
                       </>
                     );
                   })()}
                 </tbody>
-              </table>
+                </table>
+              </div>
               {managerBreakdown.length === 0 ? (
                 <p className="text-sm text-gray-600">No manager-owned rep pipeline found.</p>
               ) : null}
@@ -523,10 +609,10 @@ export default function PipelinePage() {
                   <table className="w-full border-collapse border text-sm">
                     <thead>
                       <tr>
-                        <th className="border p-2 text-left">Stage</th>
-                        <th className="border p-2 text-left">Count</th>
-                        <th className="border p-2 text-left">Deal Value</th>
-                        <th className="border p-2 text-left">Action</th>
+                        <th className="border p-2 text-center">Stage</th>
+                        <th className="border p-2 text-center">Count</th>
+                        <th className="border p-2 text-center">Deal Value</th>
+                        <th className="border p-2 text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -535,10 +621,10 @@ export default function PipelinePage() {
                         return (
                           <Fragment key={key}>
                             <tr>
-                              <td className="border p-2">{stage}</td>
-                              <td className="border p-2">{rep.pipeline[stage].count}</td>
-                              <td className="border p-2">{formatInr(rep.pipeline[stage].value)}</td>
-                              <td className="border p-2">
+                              <td className="border p-2 text-center">{stage}</td>
+                              <td className="border p-2 text-center">{rep.pipeline[stage].count}</td>
+                              <td className="border p-2 text-center">{formatInr(rep.pipeline[stage].value)}</td>
+                              <td className="border p-2 text-center">
                                 {renderDrilldownButton({
                                   keyId: key,
                                   stage,

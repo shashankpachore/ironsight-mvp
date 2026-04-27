@@ -85,10 +85,24 @@ export async function GET(request: Request) {
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
   const url = new URL(request.url);
   const stage = url.searchParams.get("stage");
+  const stages = url.searchParams.get("stages");
   const ownerId = url.searchParams.get("ownerId");
   const managerId = url.searchParams.get("managerId");
   const unassignedOnly = url.searchParams.get("unassigned") === "1";
-  if (stage && !DEAL_STAGES.includes(stage as (typeof DEAL_STAGES)[number])) {
+  const stageFilters = new Set<string>();
+  if (stage) stageFilters.add(stage);
+  if (stages) {
+    const requestedStages = stages.split(",").map((value) => value.trim()).filter(Boolean);
+    if (requestedStages.length === 0) {
+      return NextResponse.json({ error: "invalid stage filter" }, { status: 400 });
+    }
+    requestedStages.forEach((value) => stageFilters.add(value));
+  }
+  if (
+    Array.from(stageFilters).some(
+      (value) => !DEAL_STAGES.includes(value as (typeof DEAL_STAGES)[number]),
+    )
+  ) {
     return NextResponse.json({ error: "invalid stage filter" }, { status: 400 });
   }
 
@@ -165,7 +179,7 @@ export async function GET(request: Request) {
     (a, b) => b.priorityScore - a.priorityScore || compareDealsByDisplayOrder(a, b),
   );
   const filtered = sorted.filter((deal) => {
-    if (stage && deal.stage !== stage) return false;
+    if (stageFilters.size > 0 && !stageFilters.has(deal.stage)) return false;
     if (ownerId && deal.ownerId !== ownerId) return false;
     if (managerId) {
       const assignedUser = deal.account.assignedTo;
