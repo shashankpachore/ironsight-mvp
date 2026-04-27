@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useTestSession } from "@/components/test-session-bar";
 import {
+  type DealStage,
   INTERACTION_TYPES,
   OUTCOME_GROUPS,
   OUTCOME_LABELS,
@@ -11,6 +12,7 @@ import {
   type RiskCategoryValue,
   RISK_GROUPS,
   RISK_LABELS,
+  STAGE_RISK_MAP,
   STAKEHOLDER_TYPES,
 } from "@/lib/domain";
 import { istYmdToUtcStart } from "@/lib/ist-time";
@@ -51,6 +53,29 @@ export default function LogInteractionPage({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [postLogStage, setPostLogStage] = useState<DealStage | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadStage() {
+      try {
+        const { id } = await params;
+        const res = await fetch(`/api/deals/${id}/stage?postOutcome=${encodeURIComponent(outcome)}`, {
+          headers: header,
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as { stage?: DealStage };
+        if (!mounted || !body.stage) return;
+        setPostLogStage(body.stage);
+      } catch {
+        // Keep UI functional without stage-filtering if stage fetch fails.
+      }
+    }
+    void loadStage();
+    return () => {
+      mounted = false;
+    };
+  }, [header, outcome, params]);
 
   function applyOutcomeSuggestion(nextOutcome: (typeof OUTCOMES)[number]) {
     if (nextOutcome === "PO_RECEIVED") {
@@ -72,12 +97,35 @@ export default function LogInteractionPage({
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) {
-      setError("Please complete required next step fields and select at least one risk.");
+      const needsNextStep = requiresNextStep && !hasRequiredNextStep;
+      const needsRisk = requiresRisks && !hasRequiredRisks;
+      if (needsNextStep && needsRisk) {
+        setError("Please complete required next step fields and select at least one risk.");
+      } else if (needsNextStep) {
+        setError("Please complete required next step fields.");
+      } else if (needsRisk) {
+        setError("Please select at least one risk.");
+      } else {
+        setError("Please complete required fields.");
+      }
       return;
     }
     setSaving(true);
     setError("");
     const { id } = await params;
+    const payload: Record<string, unknown> = {
+      dealId: id,
+      interactionType,
+      outcome,
+      stakeholderType,
+      risks,
+      notes: notes || undefined,
+      nextStepSource: nextStepManuallyChanged ? "MANUAL" : "AUTO",
+    };
+    if (requiresNextStep) {
+      payload.nextStepType = nextStepType || undefined;
+      payload.nextStepDate = istYmdToUtcStart(nextStepDateYmd).toISOString();
+    }
 
     const res = await fetch("/api/logs", {
       method: "POST",
@@ -85,17 +133,7 @@ export default function LogInteractionPage({
         "Content-Type": "application/json",
         ...header,
       },
-      body: JSON.stringify({
-        dealId: id,
-        interactionType,
-        outcome,
-        stakeholderType,
-        risks,
-        notes: notes || undefined,
-        nextStepType: nextStepType || undefined,
-        nextStepDate: istYmdToUtcStart(nextStepDateYmd).toISOString(),
-        nextStepSource: nextStepManuallyChanged ? "MANUAL" : "AUTO",
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -118,8 +156,31 @@ export default function LogInteractionPage({
     });
   }
 
-  const canSubmit =
-    risks.length >= 1 && Boolean(nextStepType) && Boolean(nextStepDateYmd) && !saving;
+  const requiresNextStep = outcome !== "PO_RECEIVED";
+  const activeStage = postLogStage;
+  const isClosedStage = activeStage === "CLOSED";
+  const allowedRisksForStage = activeStage ? STAGE_RISK_MAP[activeStage] : null;
+  const allowedRiskSet = new Set<RiskCategoryValue>(allowedRisksForStage ?? []);
+  const requiresRisks =
+    activeStage === "EVALUATION" || activeStage === "COMMITTED" || activeStage === "LOST";
+  const risksNotAllowed = activeStage === "CLOSED";
+  const visibleRiskGroups = RISK_GROUPS.map((group) => ({
+    ...group,
+    values: allowedRisksForStage
+      ? group.values.filter((risk) => allowedRiskSet.has(risk))
+      : group.values,
+  })).filter((group) => group.values.length > 0);
+  const hasRequiredNextStep = requiresNextStep
+    ? Boolean(nextStepType) && Boolean(nextStepDateYmd)
+    : true;
+  const hasRequiredRisks = requiresRisks ? risks.length >= 1 : true;
+  const hasDisallowedRisks = risksNotAllowed ? risks.length > 0 : false;
+  const canSubmit = hasRequiredRisks && hasRequiredNextStep && !saving;
+
+  useEffect(() => {
+    if (!allowedRisksForStage) return;
+    setRisks((prev) => prev.filter((risk) => allowedRiskSet.has(risk)));
+  }, [allowedRisksForStage]);
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -211,34 +272,44 @@ export default function LogInteractionPage({
           </select>
         </div>
         <div>
-          <p className="block text-sm mb-1">Risks (min 1, max 3)</p>
-          <div className="space-y-3">
-            {RISK_GROUPS.map((group) => (
-              <div key={group.label} className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-gray-600">
-                  {group.label}
-                </p>
-                <div className="grid md:grid-cols-2 gap-2">
-                  {group.values.map((risk) => (
-                    <label key={risk} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={risks.includes(risk)}
-                        onChange={() => toggleRisk(risk)}
-                      />
-                      {RISK_LABELS[risk]}
-                    </label>
-                  ))}
-                </div>
+          {risksNotAllowed ? (
+            <p className="text-sm text-gray-500">Risks are not allowed when the deal is in CLOSED stage.</p>
+          ) : requiresRisks ? (
+            <>
+              <p className="block text-sm mb-1">Risks (min 1, max 3)</p>
+              <div className="space-y-3">
+                {visibleRiskGroups.map((group) => (
+                  <div key={group.label} className="space-y-1">
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-600">
+                      {group.label}
+                    </p>
+                    <div className="grid md:grid-cols-2 gap-2">
+                      {group.values.map((risk) => (
+                        <label key={risk} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={risks.includes(risk)}
+                            onChange={() => toggleRisk(risk)}
+                          />
+                          {RISK_LABELS[risk]}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-gray-500">Suggested based on outcome</p>
+              <p className="mt-2 text-xs text-gray-500">Suggested based on outcome</p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Risks are optional for {activeStage ?? "this stage"}.
+            </p>
+          )}
         </div>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <button
           type="submit"
-          disabled={!canSubmit}
+          disabled={!canSubmit || hasDisallowedRisks}
           className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
         >
           {saving ? "Saving..." : "Save Interaction"}

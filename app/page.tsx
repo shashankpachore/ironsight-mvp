@@ -12,7 +12,17 @@ type DealItem = {
   stage: string;
   lastActivityAt: string;
   missingSignals: string[];
-  account: { name: string };
+  owner?: {
+    id: string;
+    name: string;
+  } | null;
+  account: {
+    name: string;
+    assignedTo?: {
+      id: string;
+      name: string;
+    } | null;
+  };
 };
 
 export default async function Home() {

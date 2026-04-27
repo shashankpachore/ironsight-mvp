@@ -31,8 +31,9 @@ type InsightsPayload = {
   atRiskDeals: Array<{
     dealId: string;
     accountName: string;
+    ownerId: string;
     ownerName: string;
-    stage: "EVALUATION" | "COMMITTED";
+    stage: string;
     value: number;
     daysSinceLastActivity: number;
     reason: string;
@@ -60,7 +61,6 @@ function badgeClass(color: "RED" | "YELLOW" | "GREEN"): string {
 
 function repHint(color: "RED" | "YELLOW" | "GREEN"): string | null {
   if (color === "RED") return "Immediate intervention needed";
-  if (color === "YELLOW") return "Review pipeline";
   return null;
 }
 
@@ -193,10 +193,18 @@ export function ManagerTodayView({
               <div className="space-y-2">
                 {(insights?.repHealth ?? []).map((rep) => {
                   const hint = repHint(rep.color);
+                  const criticalSchools = (insights?.atRiskDeals ?? []).filter(
+                    (deal) => deal.ownerId === rep.repId,
+                  );
+                  const isExpanded = selectedRepId === rep.repId;
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={rep.repId}
-                      className="w-full text-left border rounded-lg p-4"
+                      className="w-full text-left border rounded-lg p-4 hover:bg-gray-50"
+                      onClick={() =>
+                        setSelectedRepId((prev) => (prev === rep.repId ? null : rep.repId))
+                      }
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="font-medium">{rep.repName}</p>
@@ -204,11 +212,35 @@ export function ManagerTodayView({
                           {rep.color}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1">
-                        Critical: {rep.criticalDeals}
-                      </p>
+                      <p className="text-sm text-gray-700 mt-1">Critical: {rep.criticalDeals}</p>
                       {hint ? <p className="text-sm mt-2">{hint}</p> : null}
-                    </div>
+                      {isExpanded ? (
+                        <div className="mt-3 border-t pt-3 space-y-2">
+                          {criticalSchools.length === 0 ? (
+                            <p className="text-sm text-gray-600">No critical schools for this rep right now.</p>
+                          ) : (
+                            criticalSchools.map((deal, index) => (
+                              <Link
+                                key={deal.dealId}
+                                href={`/deals/${deal.dealId}`}
+                                className="block border rounded p-2 text-sm"
+                              >
+                                <p className="font-medium">
+                                  {index + 1}. {deal.accountName}
+                                </p>
+                                <p className="text-gray-700">
+                                  Stage: {deal.stage} | Value: {deal.value.toLocaleString("en-IN")}
+                                </p>
+                                <p className="text-gray-700">
+                                  Last activity: {deal.daysSinceLastActivity} day
+                                  {deal.daysSinceLastActivity === 1 ? "" : "s"} ago
+                                </p>
+                              </Link>
+                            ))
+                          )}
+                        </div>
+                      ) : null}
+                    </button>
                   );
                 })}
               </div>

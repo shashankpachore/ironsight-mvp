@@ -1,14 +1,8 @@
 import { Outcome } from "@prisma/client";
 import { prisma } from "./prisma";
-import type { DealStage } from "./domain";
-
-const EVALUATION_OUTCOMES: Outcome[] = [
-  Outcome.DEMO_DONE,
-  Outcome.PRICING_REQUESTED,
-  Outcome.PROPOSAL_SHARED,
-  Outcome.BUDGET_CONFIRMED,
-  Outcome.NEGOTIATION_STARTED,
-];
+import type { DealStage, OutcomeValue } from "./domain";
+export { getDealStageFromOutcomes, stageBeforeLoss } from "./logic/stage";
+import { getDealStageFromOutcomes } from "./logic/stage";
 
 export async function getDealStage(dealId: string): Promise<DealStage> {
   const logs = await prisma.interactionLog.findMany({
@@ -16,42 +10,7 @@ export async function getDealStage(dealId: string): Promise<DealStage> {
     select: { outcome: true },
   });
 
-  const outcomes = new Set(logs.map((log) => log.outcome));
-  const hasDecisionMaker = outcomes.has(Outcome.MET_DECISION_MAKER);
-  const hasBudgetDiscussed = outcomes.has(Outcome.BUDGET_DISCUSSED);
-  const hasProposalShared = outcomes.has(Outcome.PROPOSAL_SHARED);
-  const hasDealConfirmed = outcomes.has(Outcome.DEAL_CONFIRMED);
-  const hasPoReceived = outcomes.has(Outcome.PO_RECEIVED);
-  const hasNegativeOutcome =
-    outcomes.has(Outcome.DEAL_DROPPED) || outcomes.has(Outcome.LOST_TO_COMPETITOR);
-
-  if (hasNegativeOutcome) {
-    if (outcomes.has(Outcome.BUDGET_NOT_AVAILABLE)) {
-      return "LOST";
-    }
-    const hasPositiveProgress =
-      hasDecisionMaker ||
-      hasBudgetDiscussed ||
-      hasProposalShared ||
-      hasDealConfirmed ||
-      hasPoReceived ||
-      EVALUATION_OUTCOMES.some((outcome) => outcomes.has(outcome));
-    return hasPositiveProgress ? "ACCESS" : "LOST";
-  }
-
-  if (hasDealConfirmed && hasPoReceived) return "CLOSED";
-
-  if (hasDecisionMaker && hasBudgetDiscussed && hasProposalShared && hasDealConfirmed) {
-    return "COMMITTED";
-  }
-
-  if (EVALUATION_OUTCOMES.some((outcome) => outcomes.has(outcome))) return "EVALUATION";
-
-  if (hasDecisionMaker && hasBudgetDiscussed) {
-    return "QUALIFIED";
-  }
-
-  return "ACCESS";
+  return getDealStageFromOutcomes(logs.map((log) => log.outcome as OutcomeValue));
 }
 
 type MissingSignalLogInput = {

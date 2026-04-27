@@ -17,7 +17,7 @@ type Account = {
   requestedById?: string | null;
   requestedBy?: { id: string; name: string; role: string } | null;
   assignedToId: string | null;
-  assignedTo?: { email: string } | null;
+  assignedTo?: { id: string; name: string } | null;
 };
 
 type ImportPreviewRow = {
@@ -512,7 +512,7 @@ export default function AccountsPage() {
                     <p className="font-medium">{account.name}</p>
                     <div className="text-xs text-gray-600 flex items-center gap-3">
                       <span>{formatAccountStatus(account)}</span>
-                      {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                      <span>Owner: {account.assignedTo?.name || "Unassigned"}</span>
                     </div>
                   </div>
                 ))}
@@ -531,7 +531,7 @@ export default function AccountsPage() {
                     <p className="font-medium">{account.name}</p>
                     <div className="text-xs text-gray-600 flex items-center gap-3">
                       <span>{formatAccountStatus(account)}</span>
-                      {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                      <span>Owner: {account.assignedTo?.name || "Unassigned"}</span>
                     </div>
                   </div>
                 ))}
@@ -550,7 +550,7 @@ export default function AccountsPage() {
                     <p className="font-medium">{account.name}</p>
                     <div className="text-xs text-gray-600 flex items-center gap-3">
                       <span>{formatAccountStatus(account)}</span>
-                      {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                      <span>Owner: {account.assignedTo?.name || "Unassigned"}</span>
                     </div>
                   </div>
                 ))}
@@ -580,7 +580,7 @@ export default function AccountsPage() {
                   <p className="font-medium">{account.name}</p>
                   <div className="text-xs text-gray-600 flex items-center gap-3">
                     <span>{formatAccountStatus(account)}</span>
-                    {account.assignedTo?.email ? <span>{account.assignedTo.email}</span> : null}
+                    <span>Owner: {account.assignedTo?.name || "Unassigned"}</span>
                   </div>
                 </div>
               ))}

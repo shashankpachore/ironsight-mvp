@@ -30,6 +30,7 @@ export function validateDealInput(input: unknown) {
 
 export function validateLogInput(input: unknown) {
   const body = input as Record<string, unknown>;
+  const isPoReceived = body.outcome === Outcome.PO_RECEIVED;
 
   if (!body?.dealId || typeof body.dealId !== "string") return "dealId is required";
   if (!isEnumValue(InteractionType, body.interactionType)) {
@@ -39,8 +40,8 @@ export function validateLogInput(input: unknown) {
   if (!isEnumValue(StakeholderType, body.stakeholderType)) {
     return "stakeholderType required";
   }
-  if (!Array.isArray(body.risks) || body.risks.length < 1) {
-    return "at least 1 risk required";
+  if (!Array.isArray(body.risks)) {
+    return "risks must be an array";
   }
   if (body.risks.length > 3) return "max 3 risks";
   if (!body.risks.every((risk) => isEnumValue(RiskCategory, risk))) {
@@ -49,15 +50,17 @@ export function validateLogInput(input: unknown) {
   if (body.notes !== undefined && typeof body.notes !== "string") {
     return "notes must be a string";
   }
-  if (!isValidNextStepType(body.nextStepType)) {
-    return "nextStepType required";
-  }
-  if (typeof body.nextStepDate !== "string" || !body.nextStepDate.trim()) {
-    return "nextStepDate required";
-  }
-  const nextDate = new Date(body.nextStepDate);
-  if (Number.isNaN(nextDate.getTime())) {
-    return "invalid nextStepDate";
+  if (!isPoReceived) {
+    if (!isValidNextStepType(body.nextStepType)) {
+      return "nextStepType required";
+    }
+    if (typeof body.nextStepDate !== "string" || !body.nextStepDate.trim()) {
+      return "nextStepDate required";
+    }
+    const nextDate = new Date(body.nextStepDate);
+    if (Number.isNaN(nextDate.getTime())) {
+      return "invalid nextStepDate";
+    }
   }
   if (
     body.nextStepSource !== undefined &&

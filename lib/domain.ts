@@ -157,3 +157,53 @@ export type DealStage =
   | "COMMITTED"
   | "CLOSED"
   | "LOST";
+
+export const STAGE_RISK_MAP: Record<DealStage, RiskCategoryValue[]> = {
+  ACCESS: [
+    "NO_ACCESS_TO_DM",
+    "STUCK_WITH_INFLUENCER",
+    "CHAMPION_NOT_STRONG",
+    "DECISION_DELAYED",
+    "INTERNAL_ALIGNMENT_MISSING",
+  ],
+  QUALIFIED: [
+    "BUDGET_NOT_DISCUSSED",
+    "BUDGET_NOT_CONFIRMED",
+    "BUDGET_INSUFFICIENT",
+    "DECISION_DELAYED",
+    "NO_ACCESS_TO_DM",
+  ],
+  EVALUATION: [
+    "BUDGET_NOT_CONFIRMED",
+    "BUDGET_INSUFFICIENT",
+    "COMPETITOR_INVOLVED",
+    "COMPETITOR_PREFERRED",
+    "LOW_PRODUCT_FIT",
+    "FEATURE_GAP",
+    "DECISION_DELAYED",
+  ],
+  COMMITTED: [
+    "COMPETITOR_INVOLVED",
+    "COMPETITOR_PREFERRED",
+    "INTERNAL_ALIGNMENT_MISSING",
+    "DECISION_DELAYED",
+    "BUDGET_INSUFFICIENT",
+  ],
+  CLOSED: [],
+  LOST: [
+    "COMPETITOR_PREFERRED",
+    "LOW_PRODUCT_FIT",
+    "FEATURE_GAP",
+    "BUDGET_INSUFFICIENT",
+    "CHAMPION_NOT_STRONG",
+    "INTERNAL_ALIGNMENT_MISSING",
+  ],
+};
+
+export function getAllowedRisksForStage(stage: DealStage): RiskCategoryValue[] {
+  return STAGE_RISK_MAP[stage];
+}
+
+export function isRiskAllowedForStage(stage: DealStage, risk: RiskCategoryValue): boolean {
+  return STAGE_RISK_MAP[stage].includes(risk);
+}

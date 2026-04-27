@@ -3,7 +3,7 @@ import { GET as dealsGET } from "../app/api/deals/route";
 import { POST as logsPOST } from "../app/api/logs/route";
 import { InteractionType, Outcome, RiskCategory, StakeholderType } from "@prisma/client";
 import { defaultNextStepRequestFields } from "../lib/next-step";
-import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
+import { approveAccount, assignAccount, createAccount, createDeal, json, logInteraction, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { prisma } from "../lib/prisma";
 
@@ -39,6 +39,91 @@ describe("account reassignment effects", () => {
     await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
     const deal = await prisma.deal.findUnique({ where: { id: dealId } });
     expect(deal?.accountId).toBe(accountId);
+  });
+
+  it("reassignment updates active deal ownerId to new assignee", async () => {
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
+    const deal = await prisma.deal.findUnique({ where: { id: dealId } });
+    expect(deal?.ownerId).toBe(users.rep2.id);
+    expect(deal?.terminalStage).toBeNull();
+    expect(deal?.terminalOwnerId).toBeNull();
+  });
+
+  it("reassignment does not change terminal deal ownerId", async () => {
+    await logInteraction({
+      byUserId: users.rep.id,
+      dealId,
+      interactionType: InteractionType.CALL,
+      outcome: Outcome.LOST_TO_COMPETITOR,
+      stakeholderType: StakeholderType.DECISION_MAKER,
+      risks: [RiskCategory.COMPETITOR_INVOLVED],
+      notes: "Marked lost before reassignment",
+    });
+    const before = await prisma.deal.findUnique({ where: { id: dealId }, select: { ownerId: true } });
+    const terminalBefore = await prisma.deal.findUnique({
+      where: { id: dealId },
+      select: { terminalStage: true, terminalOwnerId: true },
+    });
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
+    const after = await prisma.deal.findUnique({
+      where: { id: dealId },
+      select: { ownerId: true, terminalStage: true, terminalOwnerId: true },
+    });
+    expect(before?.ownerId).toBe(users.rep.id);
+    expect(after?.ownerId).toBe(users.rep.id);
+    expect(terminalBefore?.terminalStage).toBe("LOST");
+    expect(terminalBefore?.terminalOwnerId).toBe(users.rep.id);
+    expect(after?.terminalStage).toBe("LOST");
+    expect(after?.terminalOwnerId).toBe(users.rep.id);
+  });
+
+  it("closed transition stamps terminal ownership once", async () => {
+    const first = await logsPOST(
+      makeRequest("http://localhost/api/logs", {
+        method: "POST",
+        userId: users.rep.id,
+        body: {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.DEAL_CONFIRMED,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+          risks: [RiskCategory.COMPETITOR_INVOLVED],
+          ...defaultNextStepRequestFields(Outcome.DEAL_CONFIRMED),
+        },
+      }),
+    );
+    expect(first.status).toBe(201);
+
+    const second = await logsPOST(
+      makeRequest("http://localhost/api/logs", {
+        method: "POST",
+        userId: users.rep.id,
+        body: {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.PO_RECEIVED,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+          risks: [],
+          ...defaultNextStepRequestFields(Outcome.PO_RECEIVED),
+        },
+      }),
+    );
+    expect(second.status).toBe(201);
+
+    const dealAfterClose = await prisma.deal.findUnique({
+      where: { id: dealId },
+      select: { ownerId: true, terminalStage: true, terminalOwnerId: true },
+    });
+    expect(dealAfterClose?.terminalStage).toBe("CLOSED");
+    expect(dealAfterClose?.terminalOwnerId).toBe(dealAfterClose?.ownerId);
+
+    await assignAccount({ byUserId: users.admin.id, accountId, assigneeId: users.rep2.id });
+    const dealAfterReassign = await prisma.deal.findUnique({
+      where: { id: dealId },
+      select: { ownerId: true, terminalStage: true, terminalOwnerId: true },
+    });
+    expect(dealAfterReassign?.terminalStage).toBe("CLOSED");
+    expect(dealAfterReassign?.terminalOwnerId).toBe(dealAfterClose?.terminalOwnerId);
   });
 
   it("unassigned account blocks logging writes", async () => {

@@ -69,6 +69,53 @@ describe("audit + account import", () => {
     expect(repRes.status).toBe(403);
   });
 
+  it("manager sees only own + direct-report actor logs, admin sees all", async () => {
+    await prisma.auditLog.createMany({
+      data: [
+        {
+          entityType: AuditEntityType.USER,
+          entityId: `ent-${Date.now()}-manager`,
+          action: AuditAction.UPDATE,
+          changedById: users.manager.id,
+        },
+        {
+          entityType: AuditEntityType.USER,
+          entityId: `ent-${Date.now()}-rep`,
+          action: AuditAction.UPDATE,
+          changedById: users.rep.id,
+        },
+        {
+          entityType: AuditEntityType.USER,
+          entityId: `ent-${Date.now()}-other-team-rep`,
+          action: AuditAction.UPDATE,
+          changedById: users.rep2.id,
+        },
+        {
+          entityType: AuditEntityType.USER,
+          entityId: `ent-${Date.now()}-other-manager`,
+          action: AuditAction.UPDATE,
+          changedById: users.manager2.id,
+        },
+      ],
+    });
+
+    const managerRes = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.manager.id }));
+    const managerRows = await json<Array<{ changedById: string }>>(managerRes);
+    expect(managerRes.status).toBe(200);
+    expect(managerRows.length).toBe(2);
+    expect(managerRows.map((row) => row.changedById).sort()).toEqual(
+      [users.manager.id, users.rep.id].sort(),
+    );
+
+    const adminRes = await getAuditRoute(makeRequest("http://localhost/api/audit", { userId: users.admin.id }));
+    const adminRows = await json<Array<{ changedById: string }>>(adminRes);
+    expect(adminRes.status).toBe(200);
+    expect(adminRows.length).toBe(4);
+    expect(adminRows.map((row) => row.changedById).sort()).toEqual(
+      [users.manager.id, users.rep.id, users.rep2.id, users.manager2.id].sort(),
+    );
+  });
+
   it("csv preview validates and detects duplicates", async () => {
     const csv = "School Name,State,District\nGreen School,MH,Pune\nGreen School,MH,Pune\n";
     const formData = new FormData();

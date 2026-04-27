@@ -11,7 +11,17 @@ type DealItem = {
   stage: string;
   lastActivityAt: string;
   missingSignals: string[];
-  account: { name: string };
+  owner?: {
+    id: string;
+    name: string;
+  } | null;
+  account: {
+    name: string;
+    assignedTo?: {
+      id: string;
+      name: string;
+    } | null;
+  };
   lastActivityAtLabel: string;
 };
 
@@ -69,6 +79,7 @@ export function DealsListSearch({
           <p className="text-sm text-gray-700">Product: {deal.name}</p>
           <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
           <p className="text-sm">Stage: {deal.stage}</p>
+          <p className="text-xs text-gray-600">Owner: {deal.owner?.name || "Unassigned"}</p>
           <p className="text-sm">Last activity: {deal.lastActivityAtLabel}</p>
           <p className="text-sm">
             Missing: {deal.missingSignals.length ? deal.missingSignals.join(", ") : "None"}
@@ -92,6 +103,7 @@ export function DealsListSearch({
           <p className="text-sm text-gray-700">Product: {deal.name}</p>
           <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
           <p className="text-sm">Stage: {deal.stage}</p>
+          <p className="text-xs text-gray-600">Owner: {deal.owner?.name || "Unassigned"}</p>
           <p className="text-sm">Last activity: {deal.lastActivityAtLabel}</p>
           <p className="text-sm">
             Missing: {deal.missingSignals.length ? deal.missingSignals.join(", ") : "None"}

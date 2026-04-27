@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD) — Ironsight MVP
 
-**Source of truth:** Current codebase (Next.js App Router, Prisma, PostgreSQL in production schema; SQLite variants for dev/test clients).
+**Source of truth:** Current codebase (Next.js App Router, Prisma, PostgreSQL in production schema; SQLite test schema/client for tests).
 
 **Version:** 0.1.0 (per `package.json`)
 
@@ -20,11 +20,17 @@ Currency is presented as **INR**. Dates for compliance and several UX surfaces u
 |------|------------------|
 | Framework | Next.js **16.2.2** (App Router), React **19**, TypeScript |
 | Styling | Tailwind CSS **4** |
-| ORM / DB | Prisma **6.19**; **PostgreSQL** in `schema.prisma` (`DATABASE_URL`); separate generated clients for **default/main** (`schema.prisma`) and **test** (`schema.test.prisma` + `test.db`) selected in `lib/prisma.ts` by `NODE_ENV` / `TEST_MODE` |
+| ORM / DB | Prisma **6.19**; production datasource is **PostgreSQL** in `prisma/schema.prisma` (`DATABASE_URL`). Runtime uses a single `PrismaClient` from `@prisma/client` in `lib/prisma.ts`. A separate SQLite test schema/client exists at `prisma/schema.test.prisma` and is generated via scripts for tests. |
 | Auth | Email + password; **bcrypt** hashes (10 rounds); legacy plain-text password compare if stored value does not look like bcrypt |
 | Session | HTTP-only cookie `ironsight_user_id` = **user id** (not JWT); `sameSite: lax`, path `/` |
 | Tests | Vitest |
-| Hosting build | `vercel.json`: `prisma migrate deploy && prisma generate && next build` |
+| Hosting build | `vercel.json`: `prisma generate && next build` (no `migrate deploy` in build command) |
+
+**Plain-English notes (technology):**
+- `prisma generate` builds the Prisma client code that the app imports at runtime.
+- `next build` compiles and type-checks the app for production.
+- Build no longer runs `prisma migrate deploy`, so deployments avoid DB advisory-lock timeouts during build.
+- Runtime app code uses one Prisma client import (`@prisma/client`), which removes environment-specific client switching complexity.
 
 **Test-only auth override:** When `TEST_MODE === "true"`, `getCurrentUser` prefers `x-user-id` header if it matches a user in the DB (used by automated tests).
 
@@ -36,8 +42,8 @@ Currency is presented as **INR**. Dates for compliance and several UX surfaces u
 
 ### 3.1 Roles (`UserRole`)
 
-- **ADMIN** — Full org; account approve/reject/assign; user CRUD (non-admin users); deal delete; sees all accounts with `?includeAll=1`; export; manager pipeline breakdown; audit; activity compliance (full rep+manager set for admin viewer).
-- **MANAGER** — Sees deals on accounts assigned to **self or direct-report REPs** (`managerId` link). Can PATCH deal value for own deals or reports’ deals. Pipeline with optional per-rep breakdown. “Today” in manager mode. Export (all deals in DB, see §7.6). Users API read + audit + activity. Cannot approve accounts (admin-only in API).
+- **ADMIN** — Full org; account approve/reject/assign; user CRUD (non-admin users); deal delete; sees all accounts with `?includeAll=1`; export; manager pipeline breakdown; audit; activity compliance (full manager+rep set for admin viewer).
+- **MANAGER** — Sees deals on accounts assigned to **self or direct-report reps** (`managerId` link). Can PATCH deal value for own deals or direct reports’ deals. Pipeline with optional per-rep breakdown. “Today” in manager mode. Export (all deals in DB, see §7.11). Users API read + audit + activity. Cannot approve accounts (admin-only in API).
 - **REP** — Sees only accounts **assigned to self**; can request accounts; create deals only on **approved accounts assigned to self**; log interactions only when **account assignee is self**.
 
 ### 3.2 User hierarchy
@@ -45,13 +51,18 @@ Currency is presented as **INR**. Dates for compliance and several UX surfaces u
 - `User.managerId` optional; **REPs must have a MANAGER** on create/update (API enforced).
 - **MANAGER** users have `managerId` cleared when role is MANAGER.
 
+**Plain-English notes (roles):**
+- Admins can operate across the whole org.
+- Managers can operate for themselves plus their direct-report reps.
+- Reps can operate only on accounts explicitly assigned to them.
+
 ---
 
 ## 4. Core domain model (Prisma)
 
 ### 4.1 `User`
 
-- `id` (cuid), `name`, `email` (unique), `password`, `role`, optional `managerId`, self-relation for reports.
+- `id` (cuid), `name`, `email` (unique), `password`, `role`, optional `managerId`, self-relation for direct reports.
 
 ### 4.2 `Account`
 
@@ -111,6 +122,8 @@ Computed in `getDealStage(dealId)` from **set of all logged outcomes** for the d
 
 Ordering on the home deals list: `COMMITTED` → `EVALUATION` → `QUALIFIED` → `ACCESS` → `CLOSED`, then higher **value**, then more recent **lastActivityAt**.
 
+**Plain-English note:** Stage is computed from interaction history (it is not a stored DB column), so it can change as new logs are added.
+
 ---
 
 ## 7. Functional requirements by feature
@@ -140,13 +153,18 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
 
 ### 7.4 Deals — API
 
-- **`GET /api/deals`**: Authenticated; scoped by `buildDealWhere` (account `assignedToId` in viewer’s accessible user ids). Returns deals + `account`, each enriched with **`stage`** and **`missingSignals`**, sorted per §6.
-- **`POST /api/deals`**: Validates body (`validateDealInput`); requires logged-in user; account must exist; **`validateDealCreationAccess`**: account **APPROVED**, **assigned**, assignee **must be current user**; creates deal with `ownerId = current user`; **audit CREATE** on deal.
-- **`GET /api/deals/:id`**: 401 if no user; 404 if no deal; **read allowed if `canAccessAssignedToId(user, account.assignedToId)`** (admin: unassigned accounts readable; else assignee must be in scope). Returns deal + account + logs + risks + `stage` + `missingSignals`.
+- **`GET /api/deals`**: Authenticated; scoped by `buildDealWhere` (account `assignedToId` in viewer’s accessible user ids). Returns deals + `account`, each enriched with **`stage`**, **`missingSignals`**, **`momentumStatus`**, and **`priorityScore`**. Sorted by `priorityScore` DESC first, then tie-breakers (momentum rank, stage rank, value DESC, lastActivityAt DESC).
+- **`POST /api/deals`**: Validates body (`validateDealInput`); requires logged-in user; account must exist; **`validateDealCreationAccess`**: account **APPROVED**, **assigned**, and account assignee **must be current user**; creates deal with `ownerId = current user`; **audit CREATE** on deal.
+- **`GET /api/deals/:id`**: 401 if no user; 404 if no deal; **read allowed if `canAccessAssignedToId(user, account.assignedToId)`** (admin: unassigned accounts readable; otherwise account assignee must be in scope). Returns deal + account + logs + risks + `stage` + `missingSignals`.
 - **`PATCH /api/deals/:id`**: Only **`value`** update; requires **`assertDealAccess`** (same scope as deal list). Audit UPDATE with before/after value.
 - **`DELETE /api/deals/:id`**: **ADMIN only**; audit DELETE.
 
 **`GET /api/deals/:id/stage`** and **`GET /api/deals/:id/missing-signals`**: Same read gate as GET deal.
+
+**Plain-English notes (deals):**
+- `priorityScore` is the main ranking used to bring urgent/high-impact deals to the top.
+- `missingSignals` highlights key sales milestones that are not yet logged.
+- `momentumStatus` indicates health/urgency based on activity recency and next-step timing.
 
 ### 7.5 “Missing signals” (computed)
 
@@ -162,7 +180,7 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
   - `notes` optional string.
   - **`nextStepType`** required and must be in `NEXT_STEP_TYPES`; **`nextStepDate`** ISO string, parseable.
   - `nextStepSource` optional; if present must be `AUTO` or `MANUAL` (else 400).
-- Access: **`validateInteractionLogAccess`** — account must have `assignedToId` and it must equal **current user** (not deal owner per se).
+- Access: **`validateInteractionLogAccess`** — account must have `assignedToId`, and account assignee must equal **current user** (not deal owner).
 - **Outcome guardrails** (`validateOutcomeGuardrails`):
   - `PROPOSAL_SHARED` requires **deal.value > 0**.
   - `DEAL_CONFIRMED` requires prior outcomes (in any logs) include `MET_DECISION_MAKER`, `BUDGET_DISCUSSED`, `PROPOSAL_SHARED`.
@@ -175,7 +193,7 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
 
 - **`GET /api/accounts`**: Scoped with `buildAccountWhere` (assigned accounts in viewer’s ids). Query `?includeAll=1` allowed for **non-REP**; **REP gets 403** if they try `includeAll=1`. Response includes `assignedTo`, `requestedBy` subset.
 - **`POST /api/accounts/request`**: Authenticated; body `type` SCHOOL|PARTNER, `name`, `district`, `state` (non-empty); **state must pass `isValidIndiaState`** against fixed list `INDIAN_STATES_AND_UTS`; duplicate check on `normalized`; creates **PENDING** account with `createdById` and `requestedById` = current user; audit CREATE.
-- **`GET /api/accounts/pending`**: **ADMIN only**; all `PENDING` accounts, ordered `createdAt` asc, includes creators/assignees/requester.
+- **`GET /api/accounts/pending`**: **ADMIN only**; all `PENDING` accounts, ordered `createdAt` asc, includes creator, requester, and current assignee metadata.
 - **`POST /api/accounts/:id/approve`**, **`reject`**: **ADMIN only**; status update; audit with subset fields.
 - **`POST /api/accounts/:id/assign`**: **ADMIN only**; account must be **APPROVED**; body `{ userId }`; audit.
 - **`POST /api/accounts/import`**: `mode=preview` | `confirm` (default preview). **Multipart** `file` (CSV). Parses headers: **either** `School Name` **or** `Partner Name` column, plus `State`, `District`. **No Indian-state validation** on import (unlike manual request). Dedupes within file and vs DB on `normalized`. **Preview** returns all rows with flags; **confirm** creates **PENDING** accounts for valid rows in a transaction, each with `createdById`, `requestedById`, **`assignedToId` = importing user’s id**; audit per row. Returns skipped counts.
@@ -184,11 +202,17 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
 
 ### 7.8 Pipeline — API
 
-- **`GET /api/pipeline`**: Authenticated; aggregates **count + sum of `value`** per stage for deals in viewer’s `buildDealWhere` scope.
-- Query `?includeRepBreakdown=1`: If user is **MANAGER**, response shape `{ totals, repPipelines[] }` where per-rep pipeline buckets deals by **`account.assignedToId`** matching each rep.
-- **ADMIN** with `includeRepBreakdown=1` still only gets flat totals from main route (rep breakdown is manager-only in this handler).
+- **`GET /api/pipeline`**: Authenticated; aggregates **count + sum of `value`** by active stages (`ACCESS`, `QUALIFIED`, `EVALUATION`, `COMMITTED`) for deals in viewer’s `buildDealWhere` scope.
+- Query `?includeOutcomes=1`: adds terminal outcomes summary (`CLOSED`, `LOST`) with count + value.
+- Query `?includeRepBreakdown=1`: if user is **MANAGER**, response includes `{ totals, repPipelines[] }`, where per-rep pipelines are grouped by **`account.assignedToId`** for direct-report reps.
+- For **ADMIN** or non-manager requests, response remains totals-only (or `{ totals, outcomes }` when `includeOutcomes=1`).
 
-- **`GET /api/pipeline/manager-breakdown`**: **ADMIN only**. For each MANAGER user, count deals **owned by reps where `rep.managerId` = that manager** (`where: { ownerId in repIds }`), bucket by stage; **`totalValue`** sums deal values. Uses **deal owner**, not account assignee.
+- **`GET /api/pipeline/manager-breakdown`**: **ADMIN only**. Buckets deals by manager inferred from account-assignee mapping (manager assignees + rep assignees via `rep.managerId`), includes an `UNASSIGNED` bucket, and returns per-manager active stage count + value, terminal outcomes (`CLOSED`, `LOST`), and `totalValue` for active pipeline stages.
+
+**Plain-English notes (pipeline):**
+- Main pipeline shows current active funnel health; optional outcomes include won/lost summaries.
+- Manager breakdown is assignment-based (who owns the account assignment tree), not just who originally created the deal.
+- `UNASSIGNED` helps spot pipeline that is not currently owned by a manager tree.
 
 ### 7.9 “Today” — API
 
@@ -202,26 +226,45 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
   - **Attention**: not critical AND `daysSinceLastActivity >= 7`.
   - **Upcoming**: next step date between **today** and **today+2** IST inclusive.
 
-**REP / ADMIN** (non-manager branch): returns `{ mode: "REP", critical, attention, upcoming }` for all scoped deals combined (admin sees all assignable deals in scope — effectively all deals on accounts with assignees in… admin `getAccessibleUserIds` returns **null** meaning **no filter** on `buildDealWhere` — **admin sees all deals**).
+**REP / ADMIN** (non-manager branch): returns `{ mode: "REP", critical, attention, upcoming }` for all scoped deals combined (for admin, `getAccessibleUserIds` returns `null`, so `buildDealWhere` applies no assignee filter and admin sees all deals).
 
-**MANAGER**: `{ mode: "MANAGER", reps[], selectedRepId, drilldown: { critical, attention } }`. Rep list includes manager’s own id + direct reports. Color per rep: **RED** if any critical; else **YELLOW** if `stale` (max days since activity ≥ 7 among rep’s deals) or any attention; else **GREEN**. `?repId=` selects drilldown rep (must be in scope). **Manager response omits “upcoming” bucket** (only critical + attention in drilldown).
+**MANAGER**: `{ mode: "MANAGER", reps[], selectedRepId, drilldown: { critical, attention, upcoming } }`. Rep list includes manager’s own id + direct reports. Color per rep: **RED** if any critical; else **YELLOW** if `stale` (max days since activity ≥ 7 among rep’s deals) or any attention; else **GREEN**. `?repId=` selects drilldown rep (must be in scope).
 
-### 7.10 Export
+**Plain-English notes (today):**
+- Critical = overdue follow-ups or long inactivity.
+- Attention = not yet critical, but trending stale.
+- Upcoming = near-term next steps so teams can plan ahead.
+
+### 7.10 Manager insights
+
+- **`GET /api/manager/insights`**: **ADMIN or MANAGER only** (`401` unauthenticated, `403` for REP). Scope is derived from `buildDealWhere`.
+- Returns:
+  - `atRiskDeals[]`: deals where `momentumStatus = CRITICAL` and stage is `EVALUATION` or `COMMITTED`; includes `dealId`, `accountName`, `ownerName`, `stage`, `value`, `daysSinceLastActivity`, `reason`.
+  - `repHealth[]`: rep-level rows (`criticalDeals`, `staleDeals`, `lastActivityAt`, `activityScore`, `color`) derived from activity compliance and scoped deal momentum. For MANAGER: direct reports; for ADMIN: all reps.
+  - `interventions[]`: per at-risk deal `suggestedAction` derived from stage/activity/outcome signals.
+- Used by manager Today UI (`components/today/ManagerTodayView.tsx`) and covered by `tests/manager-insights.test.ts`.
+
+**Plain-English notes (manager insights):**
+- `atRiskDeals` is the shortlist of deals likely to slip without intervention.
+- `repHealth` is a coaching view (activity + stale/critical load), not just raw output volume.
+- `interventions` provides suggested next actions so managers can act quickly.
+
+### 7.11 Export
 
 - **`GET /api/export`**: **ADMIN or MANAGER**. CSV download `ironsight-export.csv`. Fetches **`findMany` where `{}`** — **all deals in database** with account + assigned rep email, computed stage, lastActivity ISO, missingSignals joined by ` | `. **Not scoped** to manager hierarchy.
 
-### 7.11 Audit
+### 7.12 Audit
 
 - **`GET /api/audit`**: **ADMIN or MANAGER** (`requireAdminSectionAccess`). Last **200** audit rows, `changedBy` subset included. UI shows entity type, action, actor email, timestamp (not before/after JSON in table).
 
-### 7.12 Users
+### 7.13 Users
 
 - **`GET /api/users`**: Admin-section users; returns all users’ id, name, email, role, managerId.
 - **`POST /api/users`**: **ADMIN only** (section allows manager but POST requires admin). Creates **REP or MANAGER** only; hashes password; REP requires valid `managerId` pointing to a MANAGER; audit CREATE.
 - **`PATCH /api/users/:id`**: Admin-section + **ADMIN only**. Cannot edit/delete **ADMIN** role users via this route. Validates REP manager rules; optional password re-hash; audit UPDATE.
-- **`DELETE /api/users/:id`**: **ADMIN only**; cannot delete self; cannot delete ADMIN users; 409 if user has any deals, createdAccounts, assignedAccounts, or reports.
+- **`DELETE /api/users/:id`**: **ADMIN only**; cannot delete self; cannot delete ADMIN users; 409 if user has any deals, createdAccounts, assignedAccounts, or direct reports.
 
-### 7.13 Activity compliance
+### 7.14 Activity compliance
 
 - **`GET /api/activity/compliance`**: **ADMIN or MANAGER only** (REP forbidden).
 - **`getActivityComplianceRows`**:
@@ -232,7 +275,7 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
 
 **UI `/activity`**: Server page; redirect `/` if not admin/manager; renders table with emoji thresholds for yesterday and color classes for 7D active days.
 
-### 7.14 Access logging (dev observability)
+### 7.15 Access logging (dev observability)
 
 `getAccessibleUserIds` / related: when `NODE_ENV !== "production"` or `TEST_MODE === "true"`, logs `ACCESS_SCOPE` to console with user id, role, resolved id list.
 
@@ -244,7 +287,7 @@ If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
 |-------|----------|
 | `/` | Server component; loads deals via **internal `fetch` to `/api/deals`** forwarding cookies; **Create Deal** form; lists deals (active then closed). **No server redirect if unauthenticated** — API returns 401 and page shows error string. |
 | `/login` | Redirects to `/` if session cookie valid. |
-| `/accounts` | Client page; no server role redirect; uses APIs (some return 401/403). |
+| `/accounts` | Client page; no server role redirect. **ADMIN UI**: pending approvals table, approve/reject actions, assignment controls for approved-unassigned accounts, plus request/import/search/export. **MANAGER/REP UI**: request/import/search/export plus “My Accounts” grouped as Pending / Approved (Not Assigned) / Assigned. Data comes from role-enforced APIs (pending/approve/reject/assign remain admin-only; account list remains scope-filtered). |
 | `/deals/[id]` | **Server loads `deal` by id with NO `buildDealWhere` / assignee check** — **anyone with a guessable URL can see deal detail + logs in SSR output** (APIs are stricter). `DealValueEditor` uses PATCH API (which enforces scope). |
 | `/deals/[id]/log` | Client log form. |
 | `/today` | Client; fetches `/api/today`. |
@@ -284,11 +327,13 @@ README demo users (passwords not in PRD; seed prints ids):
 1. **No middleware** enforcing login on all pages; only some routes use server `redirect` by role.
 2. **`/deals/[id]` SSR** does not enforce deal/account access control.
 3. **Export** returns **global** deal list for admin/manager, not hierarchy-scoped.
-4. **Pipeline manager breakdown** uses **deal owner**; main pipeline uses **account assignee** scope — conceptual split in reporting.
+4. **Pipeline semantics differ by endpoint:** main pipeline is user-scope filtered by account assignee (`buildDealWhere`), while manager-breakdown is org-wide/admin-only and grouped into manager buckets (including `UNASSIGNED`).
 5. **Activity compliance** attributes logs to **deal owner**, while **logging permission** uses **account assignee** — alignment depends on whether owner and assignee are the same person.
 6. **CSV import** does not validate Indian states.
 7. **`/api/session/switch`** deprecated.
 8. **Interaction log create** does not write `AuditLog`.
+
+**Plain-English note (gaps):** These are known "as built" behaviors, not planned promises. They are documented so deployment and operations decisions can account for them.
 
 ---
 
@@ -303,8 +348,9 @@ README demo users (passwords not in PRD; seed prints ids):
 - `POST /api/accounts/:id/approve`, `reject`, `assign`
 - `POST /api/accounts/import?mode=preview|confirm`
 - `PATCH|DELETE /api/accounts/:id`
-- `GET /api/pipeline`, `GET /api/pipeline/manager-breakdown`
+- `GET /api/pipeline?includeRepBreakdown=1&includeOutcomes=1`, `GET /api/pipeline/manager-breakdown`
 - `GET /api/today?repId=`
+- `GET /api/manager/insights`
 - `GET /api/export`
 - `GET /api/audit`
 - `GET|POST /api/users`, `PATCH|DELETE /api/users/:id`

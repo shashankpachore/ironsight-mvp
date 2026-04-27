@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const accounts = await prisma.account.findMany({
     where,
     include: {
-      assignedTo: true,
+      assignedTo: { select: { id: true, name: true } },
       requestedBy: { select: { id: true, name: true, role: true } },
     },
     orderBy: { createdAt: "desc" },

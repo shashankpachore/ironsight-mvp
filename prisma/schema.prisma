@@ -19,6 +19,7 @@ model User {
   requestedAccounts Account[]  @relation("AccountRequestedBy")
   auditLogsChanged  AuditLog[] @relation("ChangedByUser")
   deals             Deal[]
+  terminalOwnedDeals Deal[]    @relation("TerminalDealOwner")
   manager           User?      @relation("ManagerReports", fields: [managerId], references: [id])
   reports           User[]     @relation("ManagerReports")
 }
@@ -48,6 +49,8 @@ model Deal {
   value          Float
   accountId      String
   ownerId        String
+  terminalOwnerId String?
+  terminalStage   DealTerminalStage?
   createdAt      DateTime         @default(now())
   lastActivityAt DateTime         @default(now())
   nextStepDate   DateTime?
@@ -55,6 +58,7 @@ model Deal {
   nextStepType   String?
   account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
   owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  terminalOwner  User?            @relation("TerminalDealOwner", fields: [terminalOwnerId], references: [id], onDelete: SetNull)
   logs           InteractionLog[]
 }
 
@@ -151,6 +155,11 @@ enum Outcome {
   DEAL_ON_HOLD
   LOST_TO_COMPETITOR
   DEAL_DROPPED
+}
+
+enum DealTerminalStage {
+  CLOSED
+  LOST
 }
 
 enum RiskCategory {

@@ -87,6 +87,11 @@ enum RiskCategory {
   INTERNAL_ALIGNMENT_MISSING
 }
 
+enum DealTerminalStage {
+  CLOSED
+  LOST
+}
+
 model User {
   id                String      @id @default(cuid())
   name              String
@@ -97,6 +102,7 @@ model User {
   manager           User?       @relation("ManagerReports", fields: [managerId], references: [id])
   reports           User[]      @relation("ManagerReports")
   deals             Deal[]
+  terminalOwnedDeals Deal[]     @relation("TerminalDealOwner")
   createdAccounts   Account[]   @relation("CreatedAccounts")
   assignedAccounts  Account[]   @relation("AssignedAccounts")
   requestedAccounts Account[]   @relation("AccountRequestedBy")
@@ -128,7 +134,10 @@ model Deal {
   value          Float
   accountId      String
   ownerId        String
+  terminalOwnerId String?
+  terminalStage   DealTerminalStage?
   owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  terminalOwner  User?            @relation("TerminalDealOwner", fields: [terminalOwnerId], references: [id], onDelete: SetNull)
   account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdAt      DateTime         @default(now())
   lastActivityAt DateTime         @default(now())

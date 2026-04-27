@@ -85,6 +85,17 @@ describe("deals api - integrity and misuse coverage", () => {
     expect(dbDeal?.companyName).toBe(dbDeal?.account.name);
   });
 
+  it("created deal ownerId follows account assignedToId", async () => {
+    const accountId = await prepAssignedAccount(users.rep.id);
+    const res = await createDeal({ byUserId: users.rep.id, name: uniqueName("OwnerSync"), value: 120, accountId });
+    const body = await json<{ id: string }>(res);
+    const [dbDeal, account] = await Promise.all([
+      prisma.deal.findUnique({ where: { id: body.id } }),
+      prisma.account.findUnique({ where: { id: accountId } }),
+    ]);
+    expect(dbDeal?.ownerId).toBe(account?.assignedToId);
+  });
+
   it("rep deal list contains only deals for accounts assigned to rep", async () => {
     const repAccount = await prepAssignedAccount(users.rep.id);
     const rep2Account = await prepAssignedAccount(users.rep2.id);

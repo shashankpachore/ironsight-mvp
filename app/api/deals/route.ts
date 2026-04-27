@@ -12,6 +12,8 @@ import { prisma } from "@/lib/prisma";
 import { scoreDeal } from "@/lib/ranking";
 import { validateDealInput } from "@/lib/validation";
 
+const DEAL_STAGES = ["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED", "CLOSED", "LOST"] as const;
+
 export async function POST(request: Request) {
   const body = await request.json();
   const error = validateDealInput(body);
@@ -32,13 +34,16 @@ export async function POST(request: Request) {
     const status = accessError === "only assigned user can create deal" ? 403 : 400;
     return NextResponse.json({ error: accessError }, { status });
   }
+  if (!account.assignedToId) {
+    return NextResponse.json({ error: "account must be assigned before creating deals" }, { status: 400 });
+  }
 
   const deal = await prisma.deal.create({
     data: {
       name: body.name,
       companyName: account.name,
       value: body.value,
-      ownerId: owner.id,
+      ownerId: account.assignedToId,
       accountId: account.id,
     },
   });
@@ -58,6 +63,14 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
+  const url = new URL(request.url);
+  const stage = url.searchParams.get("stage");
+  const ownerId = url.searchParams.get("ownerId");
+  const managerId = url.searchParams.get("managerId");
+  const unassignedOnly = url.searchParams.get("unassigned") === "1";
+  if (stage && !DEAL_STAGES.includes(stage as (typeof DEAL_STAGES)[number])) {
+    return NextResponse.json({ error: "invalid stage filter" }, { status: 400 });
+  }
 
   const now = new Date();
   const todayYmd = formatYmdInIST(now);
@@ -66,11 +79,33 @@ export async function GET(request: Request) {
 
   const where = await buildDealWhere(user);
 
-  const deals = await prisma.deal.findMany({
-    where,
-    include: { account: true },
-    orderBy: { createdAt: "desc" },
-  });
+  let deals: Awaited<ReturnType<typeof prisma.deal.findMany>>;
+  try {
+    deals = await prisma.deal.findMany({
+      where,
+      include: {
+        owner: {
+          select: { id: true, name: true },
+        },
+        account: {
+          select: {
+            id: true,
+            name: true,
+            district: true,
+            state: true,
+            assignedToId: true,
+            assignedTo: {
+              select: { id: true, name: true, managerId: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  } catch (err) {
+    console.error("Failed to load deals", err);
+    return NextResponse.json({ error: "failed to load deals" }, { status: 500 });
+  }
   const dealIds = deals.map((deal) => deal.id);
   const logs = await prisma.interactionLog.findMany({
     where: { dealId: { in: dealIds } },
@@ -109,5 +144,16 @@ export async function GET(request: Request) {
   const sorted = [...enriched].sort(
     (a, b) => b.priorityScore - a.priorityScore || compareDealsByDisplayOrder(a, b),
   );
-  return NextResponse.json(sorted);
+  const filtered = sorted.filter((deal) => {
+    if (stage && deal.stage !== stage) return false;
+    if (ownerId && deal.ownerId !== ownerId) return false;
+    if (managerId) {
+      const assignedUser = deal.account.assignedTo;
+      const inManagerScope = assignedUser?.id === managerId || assignedUser?.managerId === managerId;
+      if (!inManagerScope) return false;
+    }
+    if (unassignedOnly && deal.account.assignedToId) return false;
+    return true;
+  });
+  return NextResponse.json(filtered);
 }

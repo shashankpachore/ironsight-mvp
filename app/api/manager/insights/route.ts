@@ -4,12 +4,14 @@ import { buildDealWhere } from "@/lib/access";
 import { getActivityComplianceRows } from "@/lib/activity-compliance";
 import { getCurrentUser } from "@/lib/auth";
 import { requireRole } from "@/lib/authz";
+import { getDealStageFromOutcomes } from "@/lib/logic/stage";
 import { getDealMomentum } from "@/lib/momentum";
 import { prisma } from "@/lib/prisma";
 
 type AtRiskDeal = {
   dealId: string;
   accountName: string;
+  ownerId: string;
   ownerName: string;
   stage: string;
   value: number;
@@ -31,52 +33,6 @@ type Intervention = {
   dealId: string;
   suggestedAction: string;
 };
-
-function computeDealStageFromOutcomes(outcomes: Set<Outcome>) {
-  const hasDecisionMaker = outcomes.has(Outcome.MET_DECISION_MAKER);
-  const hasBudgetDiscussed = outcomes.has(Outcome.BUDGET_DISCUSSED);
-  const hasProposalShared = outcomes.has(Outcome.PROPOSAL_SHARED);
-  const hasDealConfirmed = outcomes.has(Outcome.DEAL_CONFIRMED);
-  const hasPoReceived = outcomes.has(Outcome.PO_RECEIVED);
-  const hasNegativeOutcome =
-    outcomes.has(Outcome.DEAL_DROPPED) || outcomes.has(Outcome.LOST_TO_COMPETITOR);
-
-  // Keep aligned with existing stage semantics (see `lib/deals.ts`)
-  if (hasNegativeOutcome) {
-    if (outcomes.has(Outcome.BUDGET_NOT_AVAILABLE)) return "LOST";
-    const hasPositiveProgress =
-      hasDecisionMaker ||
-      hasBudgetDiscussed ||
-      hasProposalShared ||
-      hasDealConfirmed ||
-      hasPoReceived ||
-      outcomes.has(Outcome.DEMO_DONE) ||
-      outcomes.has(Outcome.PRICING_REQUESTED) ||
-      outcomes.has(Outcome.BUDGET_CONFIRMED) ||
-      outcomes.has(Outcome.NEGOTIATION_STARTED);
-    return hasPositiveProgress ? "ACCESS" : "LOST";
-  }
-
-  if (hasDealConfirmed && hasPoReceived) return "CLOSED";
-
-  if (hasDecisionMaker && hasBudgetDiscussed && hasProposalShared && hasDealConfirmed) {
-    return "COMMITTED";
-  }
-
-  if (
-    outcomes.has(Outcome.DEMO_DONE) ||
-    outcomes.has(Outcome.PRICING_REQUESTED) ||
-    outcomes.has(Outcome.PROPOSAL_SHARED) ||
-    outcomes.has(Outcome.BUDGET_CONFIRMED) ||
-    outcomes.has(Outcome.NEGOTIATION_STARTED)
-  ) {
-    return "EVALUATION";
-  }
-
-  if (hasDecisionMaker && hasBudgetDiscussed) return "QUALIFIED";
-
-  return "ACCESS";
-}
 
 function getAtRiskReason(params: {
   isOverdue: boolean;
@@ -180,19 +136,16 @@ export async function GET(request: Request) {
       dealLogs,
     );
     const outcomes = outcomesByDealId.get(deal.id) ?? new Set<Outcome>();
-    const stage = computeDealStageFromOutcomes(outcomes);
+    const stage = getDealStageFromOutcomes([...outcomes]);
     return { deal, momentum, outcomes, stage };
   });
 
   const atRiskDeals: AtRiskDeal[] = dealSignals
-    .filter(
-      (x) =>
-        x.momentum.momentumStatus === "CRITICAL" &&
-        (x.stage === "EVALUATION" || x.stage === "COMMITTED"),
-    )
+    .filter((x) => x.momentum.momentumStatus === "CRITICAL")
     .map((x) => ({
       dealId: x.deal.id,
       accountName: x.deal.account.name,
+      ownerId: x.deal.ownerId,
       ownerName: x.deal.owner?.name ?? "Unknown",
       stage: x.stage,
       value: x.deal.value,

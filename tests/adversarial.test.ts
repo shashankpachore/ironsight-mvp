@@ -249,7 +249,7 @@ describe("critical adversarial checks", () => {
     expect(missingSignals).toContain("No Recent Activity (7 days)");
   });
 
-  it("G. RISK VALIDATION: reject missing risks", () => {
+  it("G. RISK VALIDATION: base validation no longer enforces minimum risk count", () => {
     const error = validateLogInput({
       dealId: "deal-2",
       interactionType: InteractionType.CALL,
@@ -257,7 +257,7 @@ describe("critical adversarial checks", () => {
       stakeholderType: StakeholderType.UNKNOWN,
       risks: [],
     });
-    expect(error).toBe("at least 1 risk required");
+    expect(error).toBe("nextStepType required");
   });
 
   it("G. RISK VALIDATION: reject >3 risks", () => {
@@ -300,7 +300,7 @@ describe("critical adversarial checks", () => {
 });
 
 describe("UX friction simulation (logging flow)", () => {
-  it("requires many mandatory inputs even for low-information updates", () => {
+  it("still requires next-step fields for low-information non-PO updates", () => {
     const noResponsePayload = {
       dealId: "deal-ux",
       interactionType: InteractionType.CALL,
@@ -310,6 +310,6 @@ describe("UX friction simulation (logging flow)", () => {
     };
 
     const error = validateLogInput(noResponsePayload);
-    expect(error).toBe("at least 1 risk required");
+    expect(error).toBe("nextStepType required");
   });
 });
