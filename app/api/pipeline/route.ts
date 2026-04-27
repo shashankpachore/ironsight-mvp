@@ -67,6 +67,8 @@ export async function GET(request: Request) {
 
   const pipeline = emptyPipeline();
   const outcomes = emptyTerminalOutcomes();
+  const personalPipeline = emptyPipeline();
+  const personalOutcomes = emptyTerminalOutcomes();
   const dealStages = await Promise.all(
     deals.map(async (deal) => ({
       deal,
@@ -74,6 +76,14 @@ export async function GET(request: Request) {
     })),
   );
   dealStages.forEach(({ deal, stage }) => {
+    if (deal.account.assignedToId === user.id) {
+      if (isPipelineStage(stage)) {
+        accumulatePipeline(personalPipeline, stage, deal.value);
+      } else if (isTerminalStage(stage)) {
+        personalOutcomes[stage].count += 1;
+        personalOutcomes[stage].value += deal.value;
+      }
+    }
     if (isPipelineStage(stage)) {
       accumulatePipeline(pipeline, stage, deal.value);
       return;
@@ -85,7 +95,14 @@ export async function GET(request: Request) {
 
   if (!(includeRepBreakdown && user.role === UserRole.MANAGER)) {
     if (includeOutcomes) {
-      return NextResponse.json({ totals: pipeline, outcomes });
+      return NextResponse.json({
+        totals: pipeline,
+        outcomes,
+        personalPipeline: {
+          pipeline: personalPipeline,
+          outcomes: personalOutcomes,
+        },
+      });
     }
     return NextResponse.json(pipeline);
   }
@@ -93,13 +110,26 @@ export async function GET(request: Request) {
   const reportPipelineById = new Map<string, PipelineShape>(
     managerReports.map((report) => [report.id, emptyPipeline()]),
   );
+  const reportOutcomesById = new Map<string, TerminalOutcomesShape>(
+    managerReports.map((report) => [report.id, emptyTerminalOutcomes()]),
+  );
   dealStages.forEach(({ deal, stage }) => {
-    if (!isPipelineStage(stage)) return;
     const assignedToId = deal.account.assignedToId;
     if (!assignedToId) return;
-    const reportPipeline = reportPipelineById.get(assignedToId);
-    if (!reportPipeline) return;
-    accumulatePipeline(reportPipeline, stage, deal.value);
+    if (assignedToId === user.id) {
+      return;
+    }
+    if (isPipelineStage(stage)) {
+      const reportPipeline = reportPipelineById.get(assignedToId);
+      if (!reportPipeline) return;
+      accumulatePipeline(reportPipeline, stage, deal.value);
+      return;
+    }
+    if (!isTerminalStage(stage)) return;
+    const reportOutcomes = reportOutcomesById.get(assignedToId);
+    if (!reportOutcomes) return;
+    reportOutcomes[stage].count += 1;
+    reportOutcomes[stage].value += deal.value;
   });
 
   const repPipelines = managerReports.map((report) => ({
@@ -107,12 +137,17 @@ export async function GET(request: Request) {
     repName: report.name,
     repEmail: report.email,
     pipeline: reportPipelineById.get(report.id) ?? emptyPipeline(),
+    outcomes: reportOutcomesById.get(report.id) ?? emptyTerminalOutcomes(),
   }));
 
   return NextResponse.json({
     totals: pipeline,
     outcomes,
     repPipelines,
+    personalPipeline: {
+      pipeline: personalPipeline,
+      outcomes: personalOutcomes,
+    },
   });
 }
 

@@ -22,6 +22,11 @@ type ManagerRepPipeline = {
   repName: string;
   repEmail: string;
   pipeline: PipelineTotals;
+  outcomes: OutcomeSummary;
+};
+type PersonalPipeline = {
+  pipeline: PipelineTotals;
+  outcomes: OutcomeSummary;
 };
 
 type ManagerBreakdownRow = {
@@ -42,12 +47,23 @@ type PipelineResponse = PipelineTotals | {
   totals: PipelineTotals;
   outcomes: OutcomeSummary;
   repPipelines: ManagerRepPipeline[];
+  personalPipeline?: PersonalPipeline;
 };
 type PipelineStage = keyof PipelineTotals;
 type DrilldownStage = PipelineStage | keyof OutcomeSummary;
 type DrilldownStageRequest = DrilldownStage | DrilldownStage[];
 const PIPELINE_STAGES: PipelineStage[] = ["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED"];
 const ZERO_STAGE_SUMMARY: StageSummary = { count: 0, value: 0 };
+const EMPTY_PIPELINE_TOTALS: PipelineTotals = {
+  ACCESS: { ...ZERO_STAGE_SUMMARY },
+  QUALIFIED: { ...ZERO_STAGE_SUMMARY },
+  EVALUATION: { ...ZERO_STAGE_SUMMARY },
+  COMMITTED: { ...ZERO_STAGE_SUMMARY },
+};
+const EMPTY_OUTCOMES: OutcomeSummary = {
+  CLOSED: { ...ZERO_STAGE_SUMMARY },
+  LOST: { ...ZERO_STAGE_SUMMARY },
+};
 type DrilldownDeal = {
   id: string;
   value: number;
@@ -67,6 +83,7 @@ export default function PipelinePage() {
   const [data, setData] = useState<PipelineTotals | null>(null);
   const [outcomes, setOutcomes] = useState<OutcomeSummary | null>(null);
   const [repPipelines, setRepPipelines] = useState<ManagerRepPipeline[]>([]);
+  const [personalPipeline, setPersonalPipeline] = useState<PersonalPipeline | null>(null);
   const [managerBreakdown, setManagerBreakdown] = useState<ManagerBreakdownRow[]>([]);
   const [error, setError] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -81,9 +98,19 @@ export default function PipelinePage() {
       return;
     }
     if ("totals" in (body as PipelineResponse)) {
-      const typed = body as { totals: PipelineTotals; outcomes: OutcomeSummary; repPipelines: ManagerRepPipeline[] };
+      const typed = body as {
+        totals: PipelineTotals;
+        outcomes: OutcomeSummary;
+        repPipelines: ManagerRepPipeline[];
+        personalPipeline?: PersonalPipeline;
+      };
       setData(typed.totals);
       setOutcomes(typed.outcomes ?? null);
+      if (currentUser?.role === "MANAGER" || currentUser?.role === "ADMIN") {
+        setPersonalPipeline(typed.personalPipeline ?? null);
+      } else {
+        setPersonalPipeline(null);
+      }
       if (currentUser?.role === "MANAGER") {
         setRepPipelines(typed.repPipelines ?? []);
         setManagerBreakdown([]);
@@ -95,6 +122,7 @@ export default function PipelinePage() {
       setData(body as PipelineTotals);
       setOutcomes(null);
       setRepPipelines([]);
+      setPersonalPipeline(null);
     }
 
     if (currentUser?.role === "ADMIN") {
@@ -108,6 +136,7 @@ export default function PipelinePage() {
       setManagerBreakdown(managerData);
       return;
     }
+    setPersonalPipeline(null);
     setManagerBreakdown([]);
   }
 
@@ -319,7 +348,7 @@ export default function PipelinePage() {
       count: typeof summary?.count === "number" && Number.isFinite(summary.count) ? summary.count : 0,
       value: typeof summary?.value === "number" && Number.isFinite(summary.value) ? summary.value : 0,
     };
-    return `${safe.count} deals / ${formatInr(safe.value)}`;
+    return `${safe.count} deal${safe.count === 1 ? "" : "s"}`;
   }
 
   function sumStageSummaries(...summaries: StageSummary[]): StageSummary {
@@ -421,6 +450,69 @@ export default function PipelinePage() {
         {renderDealDrilldown(`${rowId}:CLOSED`, colSpan)}
         {renderDealDrilldown(`${rowId}:LOST`, colSpan)}
       </>
+    );
+  }
+
+  function renderSixStagePipelineTable(params: {
+    rowId: string;
+    pipeline: PipelineTotals;
+    outcomes: OutcomeSummary;
+    filters: DrilldownFilters;
+  }) {
+    return (
+      <table className="w-full border-collapse border text-sm">
+        <thead>
+          <tr>
+            <th className="border p-2 text-center">Access</th>
+            <th className="border p-2 text-center">Qualified</th>
+            <th className="border p-2 text-center">Evaluation</th>
+            <th className="border p-2 text-center">Committed</th>
+            <th className="border p-2 text-center">Closed Success</th>
+            <th className="border p-2 text-center">Lost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            {renderStageCell({
+              rowId: params.rowId,
+              stage: "ACCESS",
+              summary: params.pipeline.ACCESS,
+              filters: params.filters,
+            })}
+            {renderStageCell({
+              rowId: params.rowId,
+              stage: "QUALIFIED",
+              summary: params.pipeline.QUALIFIED,
+              filters: params.filters,
+            })}
+            {renderStageCell({
+              rowId: params.rowId,
+              stage: "EVALUATION",
+              summary: params.pipeline.EVALUATION,
+              filters: params.filters,
+            })}
+            {renderStageCell({
+              rowId: params.rowId,
+              stage: "COMMITTED",
+              summary: params.pipeline.COMMITTED,
+              filters: params.filters,
+            })}
+            {renderStageCell({
+              rowId: params.rowId,
+              stage: "CLOSED",
+              summary: params.outcomes.CLOSED,
+              filters: params.filters,
+            })}
+            {renderStageCell({
+              rowId: params.rowId,
+              stage: "LOST",
+              summary: params.outcomes.LOST,
+              filters: params.filters,
+            })}
+          </tr>
+          {renderAdminDealDrilldowns(params.rowId, 6)}
+        </tbody>
+      </table>
     );
   }
 
@@ -606,44 +698,31 @@ export default function PipelinePage() {
                   <h3 className="font-medium">
                     {rep.repName} ({rep.repEmail})
                   </h3>
-                  <table className="w-full border-collapse border text-sm">
-                    <thead>
-                      <tr>
-                        <th className="border p-2 text-center">Stage</th>
-                        <th className="border p-2 text-center">Count</th>
-                        <th className="border p-2 text-center">Deal Value</th>
-                        <th className="border p-2 text-center">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED"] as const).map((stage) => {
-                        const key = `rep:${rep.repId}:${stage}`;
-                        return (
-                          <Fragment key={key}>
-                            <tr>
-                              <td className="border p-2 text-center">{stage}</td>
-                              <td className="border p-2 text-center">{rep.pipeline[stage].count}</td>
-                              <td className="border p-2 text-center">{formatInr(rep.pipeline[stage].value)}</td>
-                              <td className="border p-2 text-center">
-                                {renderDrilldownButton({
-                                  keyId: key,
-                                  stage,
-                                  filters: { ownerId: rep.repId },
-                                  label: `${rep.repName} ${stage}`,
-                                })}
-                              </td>
-                            </tr>
-                            {renderDealDrilldown(key, 4)}
-                          </Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  {renderSixStagePipelineTable({
+                    rowId: `rep:${rep.repId}`,
+                    pipeline: rep.pipeline,
+                    outcomes: rep.outcomes,
+                    filters: { ownerId: rep.repId },
+                  })}
                 </div>
               ))}
               {repPipelines.length === 0 ? (
                 <p className="text-sm text-gray-600">No direct reports found.</p>
               ) : null}
+            </section>
+          ) : null}
+
+          {currentUser?.role === "MANAGER" || currentUser?.role === "ADMIN" ? (
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">My Personal Pipeline</h2>
+              <div className="border rounded-lg p-4 space-y-2">
+                {renderSixStagePipelineTable({
+                  rowId: `personal:${currentUser.id}`,
+                  pipeline: personalPipeline?.pipeline ?? EMPTY_PIPELINE_TOTALS,
+                  outcomes: personalPipeline?.outcomes ?? EMPTY_OUTCOMES,
+                  filters: { ownerId: currentUser.id },
+                })}
+              </div>
             </section>
           ) : null}
         </div>
