@@ -1,4 +1,4 @@
-import { AuditAction, AuditEntityType, UserRole } from "@prisma/client";
+import { AuditAction, AuditEntityType, Prisma, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { validateDealCreationAccess } from "@/lib/account-access";
 import { buildDealWhere } from "@/lib/access";
@@ -13,6 +13,26 @@ import { scoreDeal } from "@/lib/ranking";
 import { validateDealInput } from "@/lib/validation";
 
 const DEAL_STAGES = ["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED", "CLOSED", "LOST"] as const;
+
+type DealWithListRelations = Prisma.DealGetPayload<{
+  include: {
+    owner: {
+      select: { id: true; name: true };
+    };
+    account: {
+      select: {
+        id: true;
+        name: true;
+        district: true;
+        state: true;
+        assignedToId: true;
+        assignedTo: {
+          select: { id: true; name: true; managerId: true };
+        };
+      };
+    };
+  };
+}>;
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -79,7 +99,7 @@ export async function GET(request: Request) {
 
   const where = await buildDealWhere(user);
 
-  let deals: Awaited<ReturnType<typeof prisma.deal.findMany>>;
+  let deals: DealWithListRelations[];
   try {
     deals = await prisma.deal.findMany({
       where,
