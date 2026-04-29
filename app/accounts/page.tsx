@@ -197,7 +197,6 @@ export default function AccountsPage() {
     formData.append("file", importFile);
     const res = await fetch("/api/accounts/import?mode=preview", {
       method: "POST",
-      headers: header,
       body: formData,
     });
     const body = await res.json();
@@ -219,7 +218,7 @@ export default function AccountsPage() {
     formData.append("file", importFile);
     const res = await fetch("/api/accounts/import?mode=confirm", {
       method: "POST",
-      headers: header,
+      body: formData,
     });
     const body = await res.json();
     if (!res.ok) {
