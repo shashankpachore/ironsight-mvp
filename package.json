@@ -6,7 +6,7 @@
     "postinstall": "prisma generate && DATABASE_URL=file:./test.db prisma generate --schema prisma/schema.test.prisma",
     "dev": "next dev",
     "dev:staging": "next dev",
-    "build": "next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "DATABASE_URL=file:./test.db prisma db push --schema prisma/schema.test.prisma --skip-generate && DATABASE_URL=file:./test.db prisma generate --schema prisma/schema.test.prisma && vitest run",
