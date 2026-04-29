@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useEffect, useState } from "react";
 import { useTestSession } from "@/components/test-session-bar";
 import { INDIAN_STATES_AND_UTS } from "@/lib/india-states";
@@ -47,8 +48,8 @@ function formatAccountStatus(account: Account) {
 
 export default function AccountsPage() {
   const { header, currentUser } = useTestSession();
+  const queryClient = useQueryClient();
   const isAdmin = currentUser?.role === "ADMIN";
-  const isRep = currentUser?.role === "REP";
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [pending, setPending] = useState<Account[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -61,16 +62,18 @@ export default function AccountsPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
 
   useEffect(() => {
-    setAssignUserByAccount((prev) => {
-      const next = { ...prev };
-      for (const a of accounts) {
-        if (a.status !== "APPROVED") continue;
-        if (a.id in next) continue;
-        if (a.requestedBy?.role === "REP" && a.requestedById) {
-          next[a.id] = a.requestedById;
+    queueMicrotask(() => {
+      setAssignUserByAccount((prev) => {
+        const next = { ...prev };
+        for (const a of accounts) {
+          if (a.status !== "APPROVED") continue;
+          if (a.id in next) continue;
+          if (a.requestedBy?.role === "REP" && a.requestedById) {
+            next[a.id] = a.requestedById;
+          }
         }
-      }
-      return next;
+        return next;
+      });
     });
   }, [accounts]);
   const [importPreview, setImportPreview] = useState<ImportPreviewRow[]>([]);
@@ -78,21 +81,16 @@ export default function AccountsPage() {
   const [searchQuery, setSearchQuery] = useState("");
 
   async function loadAll() {
-    const accountsUrl = isRep ? "/api/accounts" : "/api/accounts?includeAll=1";
-    const [accountsRes, usersRes] = await Promise.all([
-      fetch(accountsUrl, { headers: header }),
-      fetch("/api/users", { headers: header }),
-    ]);
-    if (accountsRes.ok) setAccounts(await accountsRes.json());
-    if (usersRes.ok) setUsers(await usersRes.json());
-
-    if (isAdmin) {
-      const pendingRes = await fetch("/api/accounts/pending", { headers: header });
-      if (pendingRes.ok) setPending(await pendingRes.json());
-      return;
-    }
-
-    setPending([]);
+    const res = await fetch("/api/accounts/dashboard", { headers: header });
+    if (!res.ok) return;
+    const body = (await res.json()) as {
+      accounts?: Account[];
+      users?: User[];
+      pending?: Account[];
+    };
+    setAccounts(body.accounts ?? []);
+    setUsers(body.users ?? []);
+    setPending(isAdmin ? body.pending ?? [] : []);
   }
 
   async function requestAccount(e: FormEvent) {
@@ -128,19 +126,33 @@ export default function AccountsPage() {
   }
 
   async function approve(id: string) {
-    await fetch(`/api/accounts/${id}/approve`, {
+    const res = await fetch(`/api/accounts/${id}/approve`, {
       method: "POST",
       headers: header,
     });
-    await loadAll();
+    if (!res.ok) return;
+    const updated = (await res.json()) as Account;
+    setAccounts((prev) => prev.map((account) => (account.id === id ? { ...account, ...updated } : account)));
+    setPending((prev) => prev.filter((account) => account.id !== id));
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+      queryClient.invalidateQueries({ queryKey: ["accountsPending"] }),
+    ]);
   }
 
   async function reject(id: string) {
-    await fetch(`/api/accounts/${id}/reject`, {
+    const res = await fetch(`/api/accounts/${id}/reject`, {
       method: "POST",
       headers: header,
     });
-    await loadAll();
+    if (!res.ok) return;
+    const updated = (await res.json()) as Account;
+    setAccounts((prev) => prev.map((account) => (account.id === id ? { ...account, ...updated } : account)));
+    setPending((prev) => prev.filter((account) => account.id !== id));
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+      queryClient.invalidateQueries({ queryKey: ["accountsPending"] }),
+    ]);
   }
 
   async function assign(id: string) {

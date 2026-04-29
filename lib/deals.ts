@@ -1,8 +1,13 @@
 import { Outcome } from "@prisma/client";
 import { prisma } from "./prisma";
 import type { DealStage, OutcomeValue } from "./domain";
+export { getExpiryWarning, isDealExpired } from "./expiry";
 export { getDealStageFromOutcomes, stageBeforeLoss } from "./logic/stage";
 import { getDealStageFromOutcomes } from "./logic/stage";
+
+type StageLogInput = {
+  outcome: Outcome | OutcomeValue;
+};
 
 export async function getDealStage(dealId: string): Promise<DealStage> {
   const logs = await prisma.interactionLog.findMany({
@@ -10,6 +15,10 @@ export async function getDealStage(dealId: string): Promise<DealStage> {
     select: { outcome: true },
   });
 
+  return getDealStageFromOutcomes(logs.map((log) => log.outcome as OutcomeValue));
+}
+
+export function getDealStageFromLogs(logs: StageLogInput[]): DealStage {
   return getDealStageFromOutcomes(logs.map((log) => log.outcome as OutcomeValue));
 }
 
@@ -39,7 +48,14 @@ export async function getMissingSignals(
     return [];
   }
 
-  const outcomes = new Set(fetchedLogs.map((log) => log.outcome));
+  return getMissingSignalsFromLogs(deal.lastActivityAt, fetchedLogs);
+}
+
+export function getMissingSignalsFromLogs(
+  fallbackLastActivityAt: Date,
+  logs: MissingSignalLogInput[],
+): string[] {
+  const outcomes = new Set(logs.map((log) => log.outcome));
   const missing: string[] = [];
 
   if (!outcomes.has(Outcome.MET_DECISION_MAKER)) {
@@ -53,12 +69,12 @@ export async function getMissingSignals(
   }
 
   const latestLogAt =
-    fetchedLogs.length > 0
+    logs.length > 0
       ? new Date(
-          Math.max(...fetchedLogs.map((log) => new Date(log.createdAt).getTime())),
+          Math.max(...logs.map((log) => new Date(log.createdAt).getTime())),
         )
       : null;
-  const lastActivityAt = latestLogAt ?? deal.lastActivityAt;
+  const lastActivityAt = latestLogAt ?? fallbackLastActivityAt;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   if (lastActivityAt < sevenDaysAgo) {
     missing.push("No Recent Activity (7 days)");

@@ -1,379 +1,555 @@
-# Product Requirements Document (PRD) — Ironsight MVP
-
-**Source of truth:** Current codebase (Next.js App Router, Prisma, PostgreSQL in production schema; SQLite test schema/client for tests).
-
-**Version:** 0.1.0 (per `package.json`)
-
----
-
-## 1. Executive summary
-
-**Ironsight MVP** is an internal **B2B deal tracker** for India-centric sales operations. It lets reps work **accounts** (schools/partners), create **deals** tied to approved assigned accounts, log **structured interactions** (outcome, stakeholder, risks, notes), maintain **next steps** on deals, and gives **managers/admins** pipeline visibility, “today” prioritization, CSV export, optional account CSV import, user administration, audit history, and **yesterday activity compliance** reporting.
-
-Currency is presented as **INR**. Dates for compliance and several UX surfaces use **IST (Asia/Kolkata)**.
-
----
-
-## 2. Technology & deployment (as built)
-
-| Area | Implementation |
-|------|------------------|
-| Framework | Next.js **16.2.2** (App Router), React **19**, TypeScript |
-| Styling | Tailwind CSS **4** |
-| ORM / DB | Prisma **6.19**; production datasource is **PostgreSQL** in `prisma/schema.prisma` (`DATABASE_URL`). Runtime uses a single `PrismaClient` from `@prisma/client` in `lib/prisma.ts`. A separate SQLite test schema/client exists at `prisma/schema.test.prisma` and is generated via scripts for tests. |
-| Auth | Email + password; **bcrypt** hashes (10 rounds); legacy plain-text password compare if stored value does not look like bcrypt |
-| Session | HTTP-only cookie `ironsight_user_id` = **user id** (not JWT); `sameSite: lax`, path `/` |
-| Tests | Vitest |
-| Hosting build | `vercel.json`: `prisma generate && next build` (no `migrate deploy` in build command) |
-
-**Plain-English notes (technology):**
-- `prisma generate` builds the Prisma client code that the app imports at runtime.
-- `next build` compiles and type-checks the app for production.
-- Build no longer runs `prisma migrate deploy`, so deployments avoid DB advisory-lock timeouts during build.
-- Runtime app code uses one Prisma client import (`@prisma/client`), which removes environment-specific client switching complexity.
-
-**Test-only auth override:** When `TEST_MODE === "true"`, `getCurrentUser` prefers `x-user-id` header if it matches a user in the DB (used by automated tests).
-
-**Note on `proxy.ts`:** A `proxy` function exists that would redirect unauthenticated users away from non-API routes, but **there is no `middleware.ts` wired to it in the repo** (no import of `proxy`). **Page-level auth is therefore inconsistent** (see §8).
-
----
-
-## 3. Roles & org model
-
-### 3.1 Roles (`UserRole`)
-
-- **ADMIN** — Full org; account approve/reject/assign; user CRUD (non-admin users); deal delete; sees all accounts with `?includeAll=1`; export; manager pipeline breakdown; audit; activity compliance (full manager+rep set for admin viewer).
-- **MANAGER** — Sees deals on accounts assigned to **self or direct-report reps** (`managerId` link). Can PATCH deal value for own deals or direct reports’ deals. Pipeline with optional per-rep breakdown. “Today” in manager mode. Export (all deals in DB, see §7.11). Users API read + audit + activity. Cannot approve accounts (admin-only in API).
-- **REP** — Sees only accounts **assigned to self**; can request accounts; create deals only on **approved accounts assigned to self**; log interactions only when **account assignee is self**.
-
-### 3.2 User hierarchy
-
-- `User.managerId` optional; **REPs must have a MANAGER** on create/update (API enforced).
-- **MANAGER** users have `managerId` cleared when role is MANAGER.
-
-**Plain-English notes (roles):**
-- Admins can operate across the whole org.
-- Managers can operate for themselves plus their direct-report reps.
-- Reps can operate only on accounts explicitly assigned to them.
-
----
-
-## 4. Core domain model (Prisma)
-
-### 4.1 `User`
-
-- `id` (cuid), `name`, `email` (unique), `password`, `role`, optional `managerId`, self-relation for direct reports.
-
-### 4.2 `Account`
-
-- `name`, `normalized` (unique, lowercase single-spaced trim), `type` (`SCHOOL` default | `PARTNER`), `state`, `district` (defaults `"UNKNOWN"` in schema but flows require real values on create).
-- `createdById`, `requestedById` (nullable, `onDelete: SetNull`), `assignedToId` (nullable).
-- `status`: `PENDING` | `APPROVED` | `REJECTED` (default `PENDING`).
-- Relations: deals[], createdBy, requestedBy, assignedTo.
-
-### 4.3 `Deal`
-
-- `name` — in product terms this is the **product line** (must be one of allowed products).
-- `companyName` — **auto-filled from account name** on create (not user-editable in API).
-- `value` (float, **must be > 0**).
-- `accountId`, `ownerId` (**deal creator** at POST time).
-- `createdAt`, `lastActivityAt` (default now).
-- `nextStepType` (string), `nextStepDate` (DateTime?), `nextStepSource` (`AUTO` | `MANUAL` implied by API).
-
-### 4.4 `InteractionLog`
-
-- `interactionType`: `CALL` | `ONLINE_MEETING` | `OFFLINE_MEETING`.
-- `outcome`: enum `Outcome` (full list in schema — 18 values including positive, stalled, negative).
-- `stakeholderType`: `INFLUENCER` | `DECISION_MAKER` | `UNKNOWN`.
-- `notes` optional string.
-- `risks`: 1–3 `InteractionRisk` rows, each `category` ∈ `RiskCategory` enum.
-
-### 4.5 `AuditLog`
-
-- `entityType`: `USER` | `ACCOUNT` | `DEAL` | `LOG` (LOG type exists in enum; **interaction creates are not audited in `POST /api/logs`** — only certain mutations call `logAudit`).
-- `action`: `CREATE` | `UPDATE` | `DELETE`.
-- `changedById`, optional `before` / `after` JSON, `createdAt`.
-
----
-
-## 5. Product catalog
-
-Deal `name` must be one of (from `lib/products.json`):
-
-1. Geneo ONE
-2. Geneo EDGE
-3. Geneo IL
-4. Geneo Touch
-5. Geneo Test Prep
-
----
-
-## 6. Deal “stage” (derived, not stored)
-
-Computed in `getDealStage(dealId)` from **set of all logged outcomes** for the deal:
-
-| Stage | Rule (simplified) |
-|-------|-------------------|
-| **ACCESS** | If any `DEAL_DROPPED` or `LOST_TO_COMPETITOR`; else default baseline. |
-| **QUALIFIED** | `MET_DECISION_MAKER` AND `BUDGET_DISCUSSED` (and not escalated past by higher rules). |
-| **EVALUATION** | Any of: `DEMO_DONE`, `PRICING_REQUESTED`, `PROPOSAL_SHARED`, `BUDGET_CONFIRMED`, `NEGOTIATION_STARTED`. |
-| **COMMITTED** | `MET_DECISION_MAKER` + `BUDGET_DISCUSSED` + `PROPOSAL_SHARED` + `DEAL_CONFIRMED`. |
-| **CLOSED** | `DEAL_CONFIRMED` AND `PO_RECEIVED`. |
-
-Ordering on the home deals list: `COMMITTED` → `EVALUATION` → `QUALIFIED` → `ACCESS` → `CLOSED`, then higher **value**, then more recent **lastActivityAt**.
-
-**Plain-English note:** Stage is computed from interaction history (it is not a stored DB column), so it can change as new logs are added.
-
----
-
-## 7. Functional requirements by feature
-
-### 7.1 Authentication
-
-- **`POST /api/auth/login`**: JSON `{ email, password }`; email trimmed/lowercased; sets session cookie on success; structured error codes (`USER_NOT_FOUND`, `PASSWORD_MISMATCH`, Prisma errors, etc.).
-- **`POST /api/auth/logout`**: Clears cookie (`maxAge: 0`).
-- **`GET /api/session/me`**: Returns `{ id, email, role }` or 401.
-- **UI `/login`**: Form; redirects to `/` if cookie already maps to a user.
-- **Deprecated (410):** `POST /api/session/switch`, `GET /api/session/users`.
-
-### 7.2 Global chrome
-
-- **Root layout:** Geist fonts, `AppNav` (links depend on role), **`TestSessionBar`** showing logged-in email/role or “Session expired” with login link + logout/clear.
-- **`TestSessionProvider`:** Exposes `useTestSession()` with **`header: {}`** (identity is **cookie-based** for browser `fetch`; the name “Test” is legacy — production login uses the same path).
-
-### 7.3 Navigation (`AppNav`)
-
-Visible to everyone (no server check in nav itself):
-
-- Deals `/`, Accounts `/accounts`, Today `/today`, Pipeline `/pipeline`, **Export Data** → `GET /api/export` (link; still subject to API auth).
-
-If `canViewAdminSections(role)` (**ADMIN or MANAGER**):
-
-- Users `/users`, Audit `/audit`, Activity `/activity`.
-
-### 7.4 Deals — API
-
-- **`GET /api/deals`**: Authenticated; scoped by `buildDealWhere` (account `assignedToId` in viewer’s accessible user ids). Returns deals + `account`, each enriched with **`stage`**, **`missingSignals`**, **`momentumStatus`**, and **`priorityScore`**. Sorted by `priorityScore` DESC first, then tie-breakers (momentum rank, stage rank, value DESC, lastActivityAt DESC).
-- **`POST /api/deals`**: Validates body (`validateDealInput`); requires logged-in user; account must exist; **`validateDealCreationAccess`**: account **APPROVED**, **assigned**, and account assignee **must be current user**; creates deal with `ownerId = current user`; **audit CREATE** on deal.
-- **`GET /api/deals/:id`**: 401 if no user; 404 if no deal; **read allowed if `canAccessAssignedToId(user, account.assignedToId)`** (admin: unassigned accounts readable; otherwise account assignee must be in scope). Returns deal + account + logs + risks + `stage` + `missingSignals`.
-- **`PATCH /api/deals/:id`**: Only **`value`** update; requires **`assertDealAccess`** (same scope as deal list). Audit UPDATE with before/after value.
-- **`DELETE /api/deals/:id`**: **ADMIN only**; audit DELETE.
-
-**`GET /api/deals/:id/stage`** and **`GET /api/deals/:id/missing-signals`**: Same read gate as GET deal.
-
-**Plain-English notes (deals):**
-- `priorityScore` is the main ranking used to bring urgent/high-impact deals to the top.
-- `missingSignals` highlights key sales milestones that are not yet logged.
-- `momentumStatus` indicates health/urgency based on activity recency and next-step timing.
-
-### 7.5 “Missing signals” (computed)
-
-`getMissingSignals`:
-
-- Missing text if no log outcome: `MET_DECISION_MAKER`, `BUDGET_DISCUSSED`, `PROPOSAL_SHARED`.
-- If `lastActivityAt` older than **7 days**: append `No Recent Activity (7 days)`.
-
-### 7.6 Interaction logs — API
-
-- **`POST /api/logs`**: Validates with `validateLogInput`:
-  - `dealId`, `interactionType`, `outcome`, `stakeholderType`, `risks` array **length 1–3**, all valid `RiskCategory`.
-  - `notes` optional string.
-  - **`nextStepType`** required and must be in `NEXT_STEP_TYPES`; **`nextStepDate`** ISO string, parseable.
-  - `nextStepSource` optional; if present must be `AUTO` or `MANUAL` (else 400).
-- Access: **`validateInteractionLogAccess`** — account must have `assignedToId`, and account assignee must equal **current user** (not deal owner).
-- **Outcome guardrails** (`validateOutcomeGuardrails`):
-  - `PROPOSAL_SHARED` requires **deal.value > 0**.
-  - `DEAL_CONFIRMED` requires prior outcomes (in any logs) include `MET_DECISION_MAKER`, `BUDGET_DISCUSSED`, `PROPOSAL_SHARED`.
-  - `PO_RECEIVED` requires prior `DEAL_CONFIRMED`.
-- On success: create log; update deal `lastActivityAt = now`, set `nextStepType`, `nextStepDate`, `nextStepSource` (defaults to `AUTO` if not `MANUAL`).
-
-- **`GET /api/logs/:dealId`**: Same deal visibility as above; returns logs with `risks` flattened to category strings.
-
-### 7.7 Accounts — API
-
-- **`GET /api/accounts`**: Scoped with `buildAccountWhere` (assigned accounts in viewer’s ids). Query `?includeAll=1` allowed for **non-REP**; **REP gets 403** if they try `includeAll=1`. Response includes `assignedTo`, `requestedBy` subset.
-- **`POST /api/accounts/request`**: Authenticated; body `type` SCHOOL|PARTNER, `name`, `district`, `state` (non-empty); **state must pass `isValidIndiaState`** against fixed list `INDIAN_STATES_AND_UTS`; duplicate check on `normalized`; creates **PENDING** account with `createdById` and `requestedById` = current user; audit CREATE.
-- **`GET /api/accounts/pending`**: **ADMIN only**; all `PENDING` accounts, ordered `createdAt` asc, includes creator, requester, and current assignee metadata.
-- **`POST /api/accounts/:id/approve`**, **`reject`**: **ADMIN only**; status update; audit with subset fields.
-- **`POST /api/accounts/:id/assign`**: **ADMIN only**; account must be **APPROVED**; body `{ userId }`; audit.
-- **`POST /api/accounts/import`**: `mode=preview` | `confirm` (default preview). **Multipart** `file` (CSV). Parses headers: **either** `School Name` **or** `Partner Name` column, plus `State`, `District`. **No Indian-state validation** on import (unlike manual request). Dedupes within file and vs DB on `normalized`. **Preview** returns all rows with flags; **confirm** creates **PENDING** accounts for valid rows in a transaction, each with `createdById`, `requestedById`, **`assignedToId` = importing user’s id**; audit per row. Returns skipped counts.
-
-- **`PATCH/DELETE /api/accounts/:id`**: **ADMIN only**; PATCH can update name (recomputes normalized), type, state, district, status; audit. DELETE blocked by Prisma relations in practice if deals exist (cascade on deal side from account).
-
-### 7.8 Pipeline — API
-
-- **`GET /api/pipeline`**: Authenticated; aggregates **count + sum of `value`** by active stages (`ACCESS`, `QUALIFIED`, `EVALUATION`, `COMMITTED`) for deals in viewer’s `buildDealWhere` scope.
-- Query `?includeOutcomes=1`: adds terminal outcomes summary (`CLOSED`, `LOST`) with count + value.
-- Query `?includeRepBreakdown=1`: if user is **MANAGER**, response includes `{ totals, repPipelines[] }`, where per-rep pipelines are grouped by **`account.assignedToId`** for direct-report reps.
-- For **ADMIN** or non-manager requests, response remains totals-only (or `{ totals, outcomes }` when `includeOutcomes=1`).
-
-- **`GET /api/pipeline/manager-breakdown`**: **ADMIN only**. Buckets deals by manager inferred from account-assignee mapping (manager assignees + rep assignees via `rep.managerId`), includes an `UNASSIGNED` bucket, and returns per-manager active stage count + value, terminal outcomes (`CLOSED`, `LOST`), and `totalValue` for active pipeline stages.
-
-**Plain-English notes (pipeline):**
-- Main pipeline shows current active funnel health; optional outcomes include won/lost summaries.
-- Manager breakdown is assignment-based (who owns the account assignment tree), not just who originally created the deal.
-- `UNASSIGNED` helps spot pipeline that is not currently owned by a manager tree.
-
-### 7.9 “Today” — API
-
-**`GET /api/today`**
-
-- Only deals with **`nextStepDate` not null**, in deal scope from `buildDealWhere`.
-- Excludes “inactive” deals: any logs include (`DEAL_DROPPED` or `LOST_TO_COMPETITOR`) OR (`DEAL_CONFIRMED` and `PO_RECEIVED`).
-- For each deal, **days since last activity** uses **latest InteractionLog.createdAt** if any, else `deal.lastActivityAt`; day boundaries use **IST calendar** derived from `formatYmdInIST` / `istYmdToUtcStart`.
-- **Buckets** (for items):
-  - **Critical**: next step date **before start of (today − 2 days) in IST** OR `daysSinceLastActivity >= 10`.
-  - **Attention**: not critical AND `daysSinceLastActivity >= 7`.
-  - **Upcoming**: next step date between **today** and **today+2** IST inclusive.
-
-**REP / ADMIN** (non-manager branch): returns `{ mode: "REP", critical, attention, upcoming }` for all scoped deals combined (for admin, `getAccessibleUserIds` returns `null`, so `buildDealWhere` applies no assignee filter and admin sees all deals).
-
-**MANAGER**: `{ mode: "MANAGER", reps[], selectedRepId, drilldown: { critical, attention, upcoming } }`. Rep list includes manager’s own id + direct reports. Color per rep: **RED** if any critical; else **YELLOW** if `stale` (max days since activity ≥ 7 among rep’s deals) or any attention; else **GREEN**. `?repId=` selects drilldown rep (must be in scope).
-
-**Plain-English notes (today):**
-- Critical = overdue follow-ups or long inactivity.
-- Attention = not yet critical, but trending stale.
-- Upcoming = near-term next steps so teams can plan ahead.
-
-### 7.10 Manager insights
-
-- **`GET /api/manager/insights`**: **ADMIN or MANAGER only** (`401` unauthenticated, `403` for REP). Scope is derived from `buildDealWhere`.
+# Product Requirements Document — IronSight MVP
+
+## 1. Product Summary
+- IronSight is an internal B2B sales pipeline system for tracking accounts, deals, interactions, next steps, manager coaching signals, and pipeline health.
+- The system is interaction-driven. Sales progress is inferred from logged activity rather than manually edited stage fields.
+- The current system includes:
+  - Account request, approval, assignment, import, and search flows.
+  - Deal creation against approved assigned accounts.
+  - Structured interaction logging.
+  - Derived pipeline stages.
+  - Momentum and Today prioritization.
+  - Deal expiry after long inactivity.
+  - Product filtering in deal and pipeline views.
+  - Role-based data access for administrators, managers, and representatives.
+
+## 2. System Philosophy
+- The system is designed to enforce consistent sales execution rather than passively track deals.
+- Key principles:
+  - **No passive pipeline:** Deals without activity are automatically expired after 45 days.
+  - **No manual progression:** Pipeline stage is derived only from interaction logs.
+  - **No hidden work:** Deals must have a defined next step to remain actionable.
+  - **Single source of truth:** All endpoints reflect the same deal state, including expiry.
+  - **Behavior over data entry:** The system prioritizes real activity over manual updates.
+
+## 3. Daily Workflow (Representative)
+1. Open Today view at the start of the day.
+2. Work all **CRITICAL** deals first.
+3. Then work **ATTENTION** deals.
+4. For each action taken, log an interaction immediately.
+5. Always define a next step with a date.
+6. Ensure no deal is left without recent activity.
+7. Monitor deals approaching expiry and act before 45 days.
+
+## 4. Common Mistakes To Avoid
+- Logging interactions without defining next steps.
+- Allowing deals to sit without updates.
+- Attempting to bypass stage progression without required outcomes.
+- Treating the system as a reporting tool instead of an execution tool.
+
+## 5. System Guarantees
+- A deal always has exactly one derived stage.
+- **Stage cannot be manually overridden.**
+- Expired deals are consistently excluded from active views.
+- Access control is enforced at API level for all endpoints.
+
+## 6. Technology And Runtime
+- Application framework: Next.js App Router with React and TypeScript.
+- Database access: Prisma.
+- Production schema: `prisma/schema.prisma`.
+- Test schema: `prisma/schema.test.prisma`.
+- Production database provider: PostgreSQL.
+- Test database provider: SQLite.
+- Runtime Prisma client: `lib/prisma.ts`.
+- Test Prisma client: `lib/test-prisma.ts`.
+- Tests use real SQLite database operations and do not mock Prisma.
+
+## 7. Core Roles
+- **ADMIN**
+  - Sees all users, accounts, and deals.
+  - Can approve, reject, and assign accounts.
+  - Can manage users.
+  - Can view global pipeline totals and manager breakdown.
+- **MANAGER**
+  - Sees own assigned deals and direct-report representative deals.
+  - Can view manager Today summaries and direct-report drilldowns.
+  - Can view team pipeline.
+- **REP**
+  - Sees only own assigned accounts and deals.
+  - Can create deals only on approved accounts assigned to self.
+  - Can log interactions only on deals whose account is assigned to self.
+
+## 8. Access Control
+- Access is enforced through `buildDealWhere()` and related access helpers.
+- Deal list and pipeline APIs scope data by account assignment.
+- Scope rules:
+  - **ADMIN**: unrestricted deal visibility.
+  - **MANAGER**: manager user plus direct-report representative users.
+  - **REP**: current representative only.
+- Direct deal access uses account assignment checks.
+- Out-of-scope deal access returns forbidden responses.
+- Unauthenticated API access returns unauthorized responses.
+
+## 9. Data Model Decisions
+- There is no manual stage field on `Deal`.
+- There is no separate product field on `Deal`.
+- `Deal.name` stores the selected product.
+- `Deal.status` stores lifecycle status:
+  - `ACTIVE`
+  - `EXPIRED`
+- Stage and lifecycle are separate concepts:
+  - Stage describes sales progress.
+  - Status describes active versus expired lifecycle.
+- Expiry does not create a new stage.
+- Expiry does not convert deals to `LOST`.
+- There is no background expiry job yet.
+- Expiry is enforced on read.
+
+## 10. Product System
+- Product is stored in `Deal.name`.
+- Allowed product values come from `PRODUCT_OPTIONS`.
+- Allowed values:
+  - Geneo ONE
+  - Geneo EDGE
+  - Geneo IL
+  - Geneo Touch
+  - Geneo Test Prep
+- **Product validation is strict.**
+- Invalid product names are rejected.
+- Product filtering uses exact equality:
+  - `deal.name === selectedProduct`
+- Product filtering does not use fuzzy matching.
+- Product filtering does not use partial matching.
+
+### Design Tradeoff
+- Product is stored in `Deal.name` instead of a dedicated field.
+- Implication:
+  - Prevents custom deal naming.
+  - Limits flexibility for multi-product or bundled deals.
+- Reason:
+  - Simplifies validation and filtering for the minimum viable product.
+- Future direction:
+  - Introduce a dedicated product field while allowing flexible deal naming.
+
+## 11. Pipeline Logic
+- Pipeline stages are:
+  - `ACCESS`
+  - `QUALIFIED`
+  - `EVALUATION`
+  - `COMMITTED`
+  - `CLOSED`
+  - `LOST`
+- Normal progression is:
+  - `ACCESS` → `QUALIFIED` → `EVALUATION` → `COMMITTED` → `CLOSED`
+- Loss progression is:
+  - `ACCESS` → `QUALIFIED` → `EVALUATION` → `COMMITTED` → `LOST`
+- **Stage is derived only from interaction logs.**
+- **There is no manual stage override.**
+- Stage is recalculated from logged outcomes whenever a stage-dependent endpoint reads the deal.
+- Duplicate logs do not corrupt stage because stage is computed from outcome presence, not raw count.
+- Out-of-order logs do not incorrectly regress stage because stage is derived from the set of outcomes, not timestamp order.
+
+### Example
+- A representative creates a new deal.
+- No qualifying outcomes exist yet.
+- The deal appears in `ACCESS`.
+- After the representative logs `MET_DECISION_MAKER` and `BUDGET_DISCUSSED`, the deal appears in `QUALIFIED`.
+
+## 12. Stage Rules
+- `ACCESS`
+  - Default stage when no higher-stage signal is present.
+- `QUALIFIED`
+  - Requires:
+    - `MET_DECISION_MAKER`
+    - `BUDGET_DISCUSSED`
+- `EVALUATION`
+  - Any of these outcomes can move a deal into evaluation:
+    - `DEMO_DONE`
+    - `PRICING_REQUESTED`
+    - `PROPOSAL_SHARED`
+    - `BUDGET_CONFIRMED`
+    - `NEGOTIATION_STARTED`
+- `COMMITTED`
+  - Requires:
+    - `MET_DECISION_MAKER`
+    - `BUDGET_DISCUSSED`
+    - `PROPOSAL_SHARED`
+    - `DEAL_CONFIRMED`
+- `CLOSED`
+  - Requires:
+    - `DEAL_CONFIRMED`
+    - `PO_RECEIVED`
+- `LOST`
+  - Triggered by:
+    - `LOST_TO_COMPETITOR`
+    - `DEAL_DROPPED`
+
+### Example
+- A deal with `PROPOSAL_SHARED` is `EVALUATION`.
+- If the same deal later receives `MET_DECISION_MAKER`, `BUDGET_DISCUSSED`, and `DEAL_CONFIRMED`, it becomes `COMMITTED`.
+- If `PO_RECEIVED` is then logged, it becomes `CLOSED`.
+
+## 13. Interaction-Driven System
+- **All stage movement happens through interaction logs.**
+- Representatives do not manually choose pipeline stage.
+- Interaction logs include:
+  - Interaction type.
+  - Outcome.
+  - Stakeholder type.
+  - Risk categories.
+  - Notes.
+  - Next step information.
+- Outcomes drive stage progression.
+- Risk rules depend on the resulting stage after the new interaction.
+- Interaction logging updates:
+  - `lastActivityAt`
+  - `nextStepType`
+  - `nextStepDate`
+  - `nextStepSource`
+- Interaction logging can revive expired deals.
+
+### Example
+- A representative cannot drag a deal from `ACCESS` to `COMMITTED`.
+- The representative must log the required outcomes.
+- The system then derives the new stage from those logged outcomes.
+
+## 14. Momentum System
+- Momentum is calculated when the system reads deals and is used to decide what users should work on first.
+- Momentum is not stored as a database field.
+- Momentum is based on:
+  - `lastActivityAt`
+  - latest interaction timestamp when logs exist
+  - `nextStepDate`
+  - recent outcome context
+- Momentum states:
+  - `ON_TRACK`
+  - `AT_RISK`
+  - `STALE`
+  - `CRITICAL`
+
+## 15. Momentum Definitions
+- **ON_TRACK**
+  - Deal has recent activity.
+  - Next step is not overdue.
+  - No recent outcome pattern indicates risk.
+- **AT_RISK**
+  - Deal has a risk-prone recent outcome and enough time has passed without follow-up.
+  - Examples include proposal, demo, or negotiation activity without timely follow-up.
+- **STALE**
+  - Deal has 7 or more days of inactivity.
+  - Deal is not yet critical.
+- **CRITICAL**
+  - Deal has 10 or more days of inactivity.
+  - Or next step is overdue.
+
+## 16. Today View Logic
+- Today is the prioritization view for reps and managers.
+- Today uses active, non-expired deals only.
+- Today requires `nextStepDate` to be present.
+- Deals without `nextStepDate` do not appear in Today buckets.
+- Today excludes terminal deals:
+  - Closed deals.
+  - Lost deals.
+- Today buckets:
+  - `critical`
+  - `attention`
+  - `upcoming`
+- `critical`
+  - Includes deals with `CRITICAL` momentum.
+  - Includes overdue next steps and long inactivity.
+- `attention`
+  - Includes deals with `STALE` or `AT_RISK` momentum.
+- `upcoming`
+  - Includes active deals with near-term next steps.
+  - Used for planned follow-up execution.
+- Managers see:
+  - Rep summaries.
+  - Rep color states.
+  - Selected-rep drilldown.
+- Rep color states:
+  - Red when critical work exists.
+  - Yellow when stale or attention work exists.
+  - Green when no urgent issues exist.
+
+### Behavioral Risk
+- Deals without `nextStepDate` are excluded from Today.
+- Implication:
+  - If a representative fails to set a next step, the deal may disappear from their active work view.
+- Mitigation:
+  - Interaction logging is expected to always include next step definition.
+  - Missing signals and coaching should surface this gap.
+- Future enforcement:
+  - Deals without `nextStepDate` may be flagged or restricted from further progression.
+
+## 17. Expiry System
+- Purpose:
+  - Expiry ensures that pipeline reflects only actively worked deals.
+  - It prevents inflated pipeline and forces continuous engagement.
+- Expiry controls whether a deal is active work. It does not describe sales progress.
+- Rule:
+  - 45 days of inactivity means `Deal.status = EXPIRED`.
+- Inactivity is based on `lastActivityAt`.
+- **Expiry is automatically enforced.**
+- **Expiry is persisted in the database.**
+- **Expiry is applied across read endpoints.**
+- **Expiry is triggered on read.**
+- There is no scheduled background job yet.
+- Expiry enforcement is idempotent:
+  - Repeated reads do not create duplicate side effects.
+  - Already expired deals are not repeatedly updated.
+- Expired deals are removed from active pipeline, active deal lists, and Today worklists.
+- Expired deals can still be listed through the expired deals endpoint and expired deals UI.
+
+### Design Tradeoff
+- Expiry is currently enforced on read rather than through a background job.
+- Implication:
+  - A deal may remain marked `ACTIVE` in storage until it is accessed by a read endpoint.
+- Reason:
+  - Simplifies system design at current scale.
+  - Ensures expiry is always applied before user-facing responses.
+- Future direction:
+  - A scheduled background process may be introduced to proactively mark deals as expired.
+
+## 18. Expiry Enforcement
+- Shared expiry behavior lives in `lib/expiry.ts`.
+- `enforceExpiry()`:
+  - Reads deal `lastActivityAt`.
+  - Detects deals inactive for 45 or more days.
+  - Updates only deals whose status is not already `EXPIRED`.
+  - Returns deal objects with expired status reflected.
+- `getActiveDeals()`:
+  - Keeps only `ACTIVE` deals that are not read-time expired.
+- Read endpoints enforce expiry before returning active deal data.
+
+## 19. Resurrection Logic
+- **Adding a new interaction revives an expired deal.**
+- On successful interaction logging:
+  - `status` becomes `ACTIVE`.
+  - `lastActivityAt` is updated to current time.
+  - Next step fields are updated.
+  - Stage remains derived from interaction logs.
+  - Stage is recalculated by stage-reading endpoints.
+- Resurrection is only triggered by logging an interaction.
+- There is no direct status edit button.
+- There is no manual revive button.
+
+## 20. Product Filtering
+- Product filtering is available in the pipeline UI.
+- Product filtering uses `Deal.name`.
+- Product filtering sends a product query parameter to APIs.
+- Filtering is strict:
+  - `deal.name === selectedProduct`
+- Product filtering works with:
+  - Stage filters.
+  - Owner filters.
+  - Manager scope.
+  - Unassigned filters where supported.
+- Empty product filter means all products.
+- Invalid product query values return a bad request response.
+
+## 21. Pipeline API Behavior
+- `GET /api/pipeline`
+  - Authenticated.
+  - Scoped through `buildDealWhere()`.
+  - Enforces expiry before response.
+  - Excludes expired deals from active totals.
+  - Returns count and value by active pipeline stage.
+  - Supports outcome summaries for `CLOSED` and `LOST`.
+  - Supports manager rep breakdown for managers.
+  - Supports product filtering.
+- `GET /api/pipeline/manager-breakdown`
+  - Administrator only.
+  - Enforces expiry before response.
+  - Groups pipeline by manager ownership tree.
+  - Includes unassigned bucket.
+  - Supports product filtering.
+
+## 22. Deals API Behavior
+- `GET /api/deals`
+  - Authenticated.
+  - Scoped through `buildDealWhere()`.
+  - Enforces expiry before response.
+  - Returns active non-expired deals.
+  - Enriches each deal with:
+    - Stage.
+    - Missing signals.
+    - Momentum status.
+    - Expiry warning.
+    - Days to expiry.
+    - Priority score.
+  - Supports filters:
+    - Stage.
+    - Multiple stages.
+    - Owner.
+    - Manager.
+    - Unassigned.
+    - Product.
+- `GET /api/deals/:id`
+  - Enforces expiry on the fetched deal.
+  - Enforces access control.
+  - Returns deal detail, logs, stage, missing signals, and expiry warning.
+- `POST /api/deals`
+  - Requires valid product.
+  - Requires approved assigned account.
+  - Requires current user to be assigned to the account.
+  - Creates deal as `ACTIVE`.
+- `GET /api/deals/expired`
+  - Enforces expiry before listing expired deals.
+  - Returns scoped expired deals.
+  - Includes days since last activity.
+
+## 23. Today API Behavior
+- `GET /api/today`
+  - Authenticated.
+  - Scoped through `buildDealWhere()`.
+  - Enforces expiry before response.
+  - Excludes expired deals.
+  - Excludes deals with missing `nextStepDate`.
 - Returns:
-  - `atRiskDeals[]`: deals where `momentumStatus = CRITICAL` and stage is `EVALUATION` or `COMMITTED`; includes `dealId`, `accountName`, `ownerName`, `stage`, `value`, `daysSinceLastActivity`, `reason`.
-  - `repHealth[]`: rep-level rows (`criticalDeals`, `staleDeals`, `lastActivityAt`, `activityScore`, `color`) derived from activity compliance and scoped deal momentum. For MANAGER: direct reports; for ADMIN: all reps.
-  - `interventions[]`: per at-risk deal `suggestedAction` derived from stage/activity/outcome signals.
-- Used by manager Today UI (`components/today/ManagerTodayView.tsx`) and covered by `tests/manager-insights.test.ts`.
+    - Representative mode for reps and administrators.
+    - Manager mode for managers.
+- Expiring soon deals keep their classification bucket.
+- Expiring soon deals override displayed message:
+  - Reason: `Deal nearing expiry due to inactivity`
+  - Action: `Take action before deal expires`
 
-**Plain-English notes (manager insights):**
-- `atRiskDeals` is the shortlist of deals likely to slip without intervention.
-- `repHealth` is a coaching view (activity + stale/critical load), not just raw output volume.
-- `interventions` provides suggested next actions so managers can act quickly.
-
-### 7.11 Export
-
-- **`GET /api/export`**: **ADMIN or MANAGER**. CSV download `ironsight-export.csv`. Fetches **`findMany` where `{}`** — **all deals in database** with account + assigned rep email, computed stage, lastActivity ISO, missingSignals joined by ` | `. **Not scoped** to manager hierarchy.
-
-### 7.12 Audit
-
-- **`GET /api/audit`**: **ADMIN or MANAGER** (`requireAdminSectionAccess`). Last **200** audit rows, `changedBy` subset included. UI shows entity type, action, actor email, timestamp (not before/after JSON in table).
-
-### 7.13 Users
-
-- **`GET /api/users`**: Admin-section users; returns all users’ id, name, email, role, managerId.
-- **`POST /api/users`**: **ADMIN only** (section allows manager but POST requires admin). Creates **REP or MANAGER** only; hashes password; REP requires valid `managerId` pointing to a MANAGER; audit CREATE.
-- **`PATCH /api/users/:id`**: Admin-section + **ADMIN only**. Cannot edit/delete **ADMIN** role users via this route. Validates REP manager rules; optional password re-hash; audit UPDATE.
-- **`DELETE /api/users/:id`**: **ADMIN only**; cannot delete self; cannot delete ADMIN users; 409 if user has any deals, createdAccounts, assignedAccounts, or direct reports.
-
-### 7.14 Activity compliance
-
-- **`GET /api/activity/compliance`**: **ADMIN or MANAGER only** (REP forbidden).
-- **`getActivityComplianceRows`**:
-  - **MANAGER viewer**: users = self (MANAGER) + REPs with `managerId = viewer`.
-  - **ADMIN viewer**: all users with role **REP or MANAGER**.
-  - Metrics: **yesterday** interaction count (IST yesterday window), **last activity** (any log on deals **owned** by that user — `deal.ownerId`), **weekly active days** = distinct IST calendar days with ≥1 log in rolling **7-day window including today** `[today-6, today]`.
-  - Rows sorted: ascending by yesterday count, then ascending by last activity time (nulls last in effect).
-
-**UI `/activity`**: Server page; redirect `/` if not admin/manager; renders table with emoji thresholds for yesterday and color classes for 7D active days.
-
-### 7.15 Access logging (dev observability)
-
-`getAccessibleUserIds` / related: when `NODE_ENV !== "production"` or `TEST_MODE === "true"`, logs `ACCESS_SCOPE` to console with user id, role, resolved id list.
-
----
-
-## 8. UI routes & server-side gates (as implemented)
-
-| Route | Behavior |
-|-------|----------|
-| `/` | Server component; loads deals via **internal `fetch` to `/api/deals`** forwarding cookies; **Create Deal** form; lists deals (active then closed). **No server redirect if unauthenticated** — API returns 401 and page shows error string. |
-| `/login` | Redirects to `/` if session cookie valid. |
-| `/accounts` | Client page; no server role redirect. **ADMIN UI**: pending approvals table, approve/reject actions, assignment controls for approved-unassigned accounts, plus request/import/search/export. **MANAGER/REP UI**: request/import/search/export plus “My Accounts” grouped as Pending / Approved (Not Assigned) / Assigned. Data comes from role-enforced APIs (pending/approve/reject/assign remain admin-only; account list remains scope-filtered). |
-| `/deals/[id]` | **Server loads `deal` by id with NO `buildDealWhere` / assignee check** — **anyone with a guessable URL can see deal detail + logs in SSR output** (APIs are stricter). `DealValueEditor` uses PATCH API (which enforces scope). |
-| `/deals/[id]/log` | Client log form. |
-| `/today` | Client; fetches `/api/today`. |
-| `/pipeline` | Client; fetches pipeline (+ manager breakdown for admin). |
-| `/users` | **Server:** redirect `/` if role not ADMIN/MANAGER. Client handles read-only manager vs admin CRUD. |
-| `/audit` | **Server:** same gate as users. |
-| `/activity` | **Server:** same gate as users. |
-
-**`proxy.ts` auth gate:** Not active without Next middleware wiring.
-
----
-
-## 9. Client-side “suggestions” (logging UI)
-
-Separate from server `lib/next-step.ts` used in tests/docs:
-
-- **`lib/suggestions.ts`** maps outcomes to UI next-step types (with normalization, e.g. `SCHEDULE_DM_MEETING` → `SCHEDULE_MEETING`) and **risk suggestions** (partial map).
-- **Next step date** in UI uses `getSuggestedNextStepDate`: e.g. +1 day for `PROPOSAL_SHARED` / `PRICING_REQUESTED`, +3 for `NO_RESPONSE` / `FOLLOW_UP_DONE`, else +2 IST days from “today”.
-- **PO_RECEIVED path:** UI clears next step type/date and disables fields, but **submit requires** `nextStepType` and `nextStepDate` — **logging `PO_RECEIVED` from the UI is effectively blocked** unless user works around validation (API would still require next step fields).
-
----
-
-## 10. Seed data (script behavior, high level)
-
-`prisma/seed.mjs` uses bcrypt, reads `products.json`, generates synthetic users/accounts/deals/logs with randomized weighted outcomes to demo pipeline stages — details are in script (not required for PRD parity beyond: **seed exists** and README documents demo logins).
-
-README demo users (passwords not in PRD; seed prints ids):
-
-- `admin@ironsight.local` — ADMIN
-- `manager@ironsight.local` — MANAGER
-- `rep@ironsight.local` — REP
-
----
-
-## 11. Explicit non-requirements / implementation gaps (for “as-built” honesty)
-
-1. **No middleware** enforcing login on all pages; only some routes use server `redirect` by role.
-2. **`/deals/[id]` SSR** does not enforce deal/account access control.
-3. **Export** returns **global** deal list for admin/manager, not hierarchy-scoped.
-4. **Pipeline semantics differ by endpoint:** main pipeline is user-scope filtered by account assignee (`buildDealWhere`), while manager-breakdown is org-wide/admin-only and grouped into manager buckets (including `UNASSIGNED`).
-5. **Activity compliance** attributes logs to **deal owner**, while **logging permission** uses **account assignee** — alignment depends on whether owner and assignee are the same person.
-6. **CSV import** does not validate Indian states.
-7. **`/api/session/switch`** deprecated.
-8. **Interaction log create** does not write `AuditLog`.
-
-**Plain-English note (gaps):** These are known "as built" behaviors, not planned promises. They are documented so deployment and operations decisions can account for them.
-
----
-
-## 12. API index (machine-readable)
-
-- `POST /api/auth/login`, `POST /api/auth/logout`
-- `GET /api/session/me`
-- `GET|POST /api/deals`, `GET|PATCH|DELETE /api/deals/:id`
-- `GET /api/deals/:id/stage`, `GET /api/deals/:id/missing-signals`
-- `POST /api/logs`, `GET /api/logs/:dealId`
-- `GET /api/accounts`, `POST /api/accounts/request`, `GET /api/accounts/pending`
-- `POST /api/accounts/:id/approve`, `reject`, `assign`
-- `POST /api/accounts/import?mode=preview|confirm`
-- `PATCH|DELETE /api/accounts/:id`
-- `GET /api/pipeline?includeRepBreakdown=1&includeOutcomes=1`, `GET /api/pipeline/manager-breakdown`
-- `GET /api/today?repId=`
+## 24. Manager Insights Behavior
 - `GET /api/manager/insights`
-- `GET /api/export`
-- `GET /api/audit`
-- `GET|POST /api/users`, `PATCH|DELETE /api/users/:id`
-- `GET /api/activity/compliance`
+  - Administrator or manager only.
+  - Scoped through `buildDealWhere()`.
+  - Enforces expiry before response.
+  - Returns:
+    - At-risk deals.
+    - Rep health.
+    - Suggested interventions.
+    - Expired deals summary.
+    - Expiring soon deals summary.
+- Expired deals summary includes:
+  - Total expired deals.
+  - Total expired value.
+  - Rep-wise expired counts and value.
+- Expiring soon summary includes:
+  - Total expiring soon deals.
+  - Total value.
+  - Rep-wise counts and value.
+
+## 25. Missing Signals
+- Missing signals are computed from interaction outcomes.
+- Signals include:
+  - Missing decision maker.
+  - Missing budget discussion.
+  - Missing proposal.
+  - No recent activity.
+- Missing signals are read-time helpers.
+- Missing signals do not change stage by themselves.
+
+## 26. Account Rules
+- Deals can be created only on approved accounts.
+- Deals can be created only when the account is assigned.
+- Representatives can create deals only for accounts assigned to themselves.
+- Managers and administrators cannot bypass assigned-user restrictions for deal creation.
+- Account assignment is the main ownership boundary for active work.
+
+## 27. Key Endpoints
+- `/api/deals`
+  - Deal list and deal creation.
+  - Expiry enforced before returning deal list.
+- `/api/deals/:id`
+  - Deal detail, update, delete.
+  - Expiry enforced on read.
+- `/api/deals/:id/stage`
+  - Derived stage read.
+  - Expiry enforced on deal read.
+- `/api/deals/:id/missing-signals`
+  - Missing sales signals.
+  - Expiry enforced on deal read.
+- `/api/deals/expired`
+  - Expired deal list.
+  - Expiry enforced before listing.
+- `/api/logs`
+  - Interaction creation.
+  - Revives expired deals.
+- `/api/logs/:dealId`
+  - Interaction history.
+  - Expiry enforced on deal read.
+- `/api/pipeline`
+  - Pipeline totals and manager rep breakdown.
+  - Expiry enforced before response.
+- `/api/pipeline/manager-breakdown`
+  - Administrator manager breakdown.
+  - Expiry enforced before response.
+- `/api/today`
+  - Rep and manager Today prioritization.
+  - Expiry enforced before response.
+- `/api/manager/insights`
+  - Manager coaching and pipeline leakage insights.
+  - Expiry enforced before response.
+- `/api/export`
+  - CSV export.
+  - Expiry enforced before export rows are produced.
+
+## 28. Edge Cases Handled
+- Out-of-order interaction logs:
+  - Stage does not regress incorrectly.
+- Duplicate interaction logs:
+  - Stage is not inflated or corrupted.
+- Missing `nextStepDate`:
+  - Deal is excluded from Today buckets.
+  - Today API still returns successfully.
+- 44-day inactivity:
+  - Deal remains `ACTIVE`.
+  - Deal can show expiring soon warning.
+- 45-day inactivity:
+  - Deal becomes `EXPIRED`.
+  - Deal is excluded from active worklists.
+- Access isolation:
+  - Representatives cannot read other representatives’ deals.
+  - Managers cannot read outside their team.
+  - Administrators can read all.
+- Product filtering:
+  - Exact product matching only.
+  - Invalid product filters return bad request.
+
+## 29. Testing Requirements
+- Tests use SQLite through `lib/test-prisma.ts`.
+- Tests use real database operations.
+- Prisma is not mocked.
+- Core flow tests cover:
+  - Deal creation.
+  - Stage progression.
+  - Expiry.
+  - Resurrection.
+  - Product filtering.
+  - Today classification.
+  - Access control.
+- Dirty scenario tests cover:
+  - Out-of-order logs.
+  - Duplicate logs.
+  - Missing next step date.
+  - Expiry persistence through non-deal-list endpoints.
+  - 44-day and 45-day expiry boundary.
+
+
+## 30. Performance Considerations
+- Expiry enforcement may trigger database updates during read operations.
+- At current scale, this is acceptable and ensures correctness.
+- At larger scale, expiry enforcement may need to be moved to a background job.
+- Repeated expiry checks are idempotent and only update when necessary.
+
+## 31. Explicit Non-Goals
+- No manual stage editing.
+- No separate product column.
+- No background expiry worker yet.
+- No direct revive button.
+- No fuzzy product search in pipeline filtering.
+- No conversion of expired deals into lost deals.
+
+## 32. Current Known Operational Notes
+- Expiry is read-triggered, so a stale active deal becomes expired when a read endpoint touches it.
+- If no read endpoint touches a stale deal, it can remain `ACTIVE` in storage until the next read.
+- Browser pages may not block every route before loading.
+- API-level access control is the source of truth for data access.
+- Interaction logging is the only supported reactivation path for expired deals.
+
+
+## 33. Future Evolution
+- The following improvements are expected as the system scales:
+  - Background expiry job to proactively mark inactive deals as expired.
+  - Dedicated product field separate from deal name.
+  - Enhanced analytics and reporting layer across stage, product, and expiry.
+  - Improved enforcement of next step completeness.
+  - Performance optimization for high-frequency read endpoints.
 
 ---
 
-## 13. Next step types (API validation)
-
-Allowed `nextStepType` values (from `lib/next-step.ts`): `FOLLOW_UP`, `SCHEDULE_MEETING`, `SCHEDULE_DEMO`, `SEND_PRICING`, `SEND_PROPOSAL`, `AWAIT_RESPONSE`, `CLOSE_DEAL`, `OTHER`.
-
----
-
-## 14. Enums reference (schema)
-
-**InteractionType:** `CALL`, `ONLINE_MEETING`, `OFFLINE_MEETING`
-
-**StakeholderType:** `INFLUENCER`, `DECISION_MAKER`, `UNKNOWN`
-
-**Outcome:** `MET_INFLUENCER`, `MET_DECISION_MAKER`, `BUDGET_DISCUSSED`, `DEMO_DONE`, `PRICING_REQUESTED`, `PROPOSAL_SHARED`, `BUDGET_CONFIRMED`, `NEGOTIATION_STARTED`, `DEAL_CONFIRMED`, `PO_RECEIVED`, `NO_RESPONSE`, `FOLLOW_UP_DONE`, `INTERNAL_DISCUSSION`, `DECISION_DELAYED`, `DECISION_MAKER_UNAVAILABLE`, `BUDGET_NOT_AVAILABLE`, `DEAL_ON_HOLD`, `LOST_TO_COMPETITOR`, `DEAL_DROPPED`
-
-**RiskCategory:** `NO_ACCESS_TO_DM`, `STUCK_WITH_INFLUENCER`, `BUDGET_NOT_DISCUSSED`, `BUDGET_NOT_CONFIRMED`, `BUDGET_INSUFFICIENT`, `COMPETITOR_INVOLVED`, `COMPETITOR_PREFERRED`, `DECISION_DELAYED`, `LOW_PRODUCT_FIT`, `FEATURE_GAP`, `CHAMPION_NOT_STRONG`, `INTERNAL_ALIGNMENT_MISSING`
-
----
-
-*This document describes behavior implemented in the repository at the time of authoring; drift may occur if code changes without updating this file.*
+This document reflects the current implemented system behavior in the repository.

@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useManagerTodayFull } from "@/hooks/useManagerTodayFull";
+import { formatInr } from "@/lib/currency";
 
 type HeaderLike = HeadersInit | undefined;
 
@@ -51,6 +53,31 @@ type InsightsPayload = {
     dealId: string;
     suggestedAction: string;
   }>;
+  expiredDealsSummary: {
+    totalExpiredDeals: number;
+    totalExpiredValue: number;
+    byRep: Array<{
+      ownerId: string;
+      ownerName: string;
+      expiredDeals: number;
+      expiredValue: number;
+    }>;
+  };
+  expiringSoonDealsSummary: {
+    totalExpiringSoon: number;
+    totalValue: number;
+    byRep: Array<{
+      ownerId: string;
+      ownerName: string;
+      count: number;
+      value: number;
+    }>;
+  };
+};
+
+type ManagerFullPayload = {
+  today: MyDealsPayload;
+  insights: InsightsPayload;
 };
 
 function badgeClass(color: "RED" | "YELLOW" | "GREEN"): string {
@@ -64,63 +91,28 @@ function repHint(color: "RED" | "YELLOW" | "GREEN"): string | null {
   return null;
 }
 
+function expiredBadgeColor(expiredDeals: number): "RED" | "YELLOW" | "GREEN" {
+  if (expiredDeals > 10) return "RED";
+  if (expiredDeals >= 5) return "YELLOW";
+  return "GREEN";
+}
+
+function expiringSoonBadgeColor(count: number): "YELLOW" | "GREEN" {
+  return count > 5 ? "YELLOW" : "GREEN";
+}
+
 export function ManagerTodayView({
-  header,
   currentUser,
 }: {
   header: HeaderLike;
   currentUser: { id: string; role: string } | null | undefined;
 }) {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [myDeals, setMyDeals] = useState<MyDealsPayload | null>(null);
-  const [insights, setInsights] = useState<InsightsPayload | null>(null);
   const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setLoading(true);
-      setError("");
-
-      try {
-        const managerId = currentUser?.id;
-        if (!managerId) {
-          throw new Error("missing manager id");
-        }
-
-        const [todayRes, insightsRes] = await Promise.all([
-          fetch(`/api/today?repId=${encodeURIComponent(managerId)}`, { headers: header }),
-          fetch("/api/manager/insights", { headers: header }),
-        ]);
-
-        if (!todayRes.ok) {
-          const body = (await todayRes.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? "Failed to load your deals.");
-        }
-        if (!insightsRes.ok) {
-          const body = (await insightsRes.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? "Failed to load team insights.");
-        }
-
-        const todayPayload = (await todayRes.json()) as MyDealsPayload;
-        const insightsPayload = (await insightsRes.json()) as InsightsPayload;
-
-        if (!mounted) return;
-        setMyDeals(todayPayload);
-        setInsights(insightsPayload);
-        setLoading(false);
-      } catch (e) {
-        if (!mounted) return;
-        setError(e instanceof Error ? e.message : "Failed to load manager view.");
-        setLoading(false);
-      }
-    }
-    void load();
-    return () => {
-      mounted = false;
-    };
-  }, [header, currentUser?.id]);
+  const managerFullQuery = useManagerTodayFull<ManagerFullPayload>(Boolean(currentUser?.id));
+  const myDeals = managerFullQuery.data?.today ?? null;
+  const insights = managerFullQuery.data?.insights ?? null;
+  const loading = managerFullQuery.isLoading;
+  const error = managerFullQuery.error;
 
   const interventionByDealId = useMemo(() => {
     const m = new Map<string, string>();
@@ -144,7 +136,7 @@ export function ManagerTodayView({
       <p className="text-sm text-gray-700">Actionable follow-ups based on next steps and weekly cadence.</p>
 
       {loading ? <p>Loading manager view...</p> : null}
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-red-600">Failed to load manager view.</p> : null}
 
       {!loading && !error && myDeals ? (
         <>
@@ -155,7 +147,7 @@ export function ManagerTodayView({
               <p className="text-sm text-gray-600">No priority actions right now.</p>
             ) : (
               <div className="space-y-2">
-                {priorityActions.my
+                {[...priorityActions.my]
                   .sort((a, b) => b.score - a.score)
                   .map((item) => (
                     <Link
@@ -241,6 +233,75 @@ export function ManagerTodayView({
                         </div>
                       ) : null}
                     </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* SECTION 3: Expiring Soon Deals */}
+          <section className="border rounded-lg p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-medium">Expiring Soon (Next 15 Days)</h2>
+              <p className="text-sm font-medium">
+                Total Value: {formatInr(insights?.expiringSoonDealsSummary?.totalValue ?? 0)}
+              </p>
+            </div>
+            {(insights?.expiringSoonDealsSummary?.byRep?.length ?? 0) === 0 ? (
+              <p className="text-sm text-gray-600">No deals are nearing expiry right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {(insights?.expiringSoonDealsSummary?.byRep ?? []).map((rep) => {
+                  const color = expiringSoonBadgeColor(rep.count);
+                  return (
+                    <div
+                      key={rep.ownerId}
+                      className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-3"
+                    >
+                      <p className="font-medium">
+                        {rep.ownerName} — {rep.count} deal
+                        {rep.count === 1 ? "" : "s"} — {formatInr(rep.value)}
+                      </p>
+                      <span className={`text-xs rounded border px-2 py-0.5 ${badgeClass(color)}`}>
+                        {color}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* SECTION 4: Expired Deals */}
+          <section className="border rounded-lg p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-medium">Expired Deals (Pipeline Leakage)</h2>
+              <p className="text-sm font-medium">
+                Total Expired Value: {formatInr(insights?.expiredDealsSummary?.totalExpiredValue ?? 0)}
+              </p>
+            </div>
+            <p className="text-sm text-gray-700">
+              Expired deals indicate missed follow-ups. High numbers suggest poor pipeline discipline.
+            </p>
+            {(insights?.expiredDealsSummary?.byRep?.length ?? 0) === 0 ? (
+              <p className="text-sm text-gray-600">No expired deals right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {(insights?.expiredDealsSummary?.byRep ?? []).map((rep) => {
+                  const color = expiredBadgeColor(rep.expiredDeals);
+                  return (
+                    <div
+                      key={rep.ownerId}
+                      className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-3"
+                    >
+                      <p className="font-medium">
+                        {rep.ownerName} — {rep.expiredDeals} deal
+                        {rep.expiredDeals === 1 ? "" : "s"} — {formatInr(rep.expiredValue)}
+                      </p>
+                      <span className={`text-xs rounded border px-2 py-0.5 ${badgeClass(color)}`}>
+                        {color}
+                      </span>
+                    </div>
                   );
                 })}
               </div>

@@ -1,4 +1,4 @@
-import { DealTerminalStage, Outcome } from "@prisma/client";
+import { DealStatus, DealTerminalStage, Outcome } from "@prisma/client";
 import { validateInteractionLogAccess } from "@/lib/account-access";
 import { getCurrentUser } from "@/lib/auth";
 import { getDealStageFromOutcomes } from "@/lib/deals";
@@ -12,7 +12,6 @@ export async function POST(request: Request) {
     if (!user) return Response.json({ error: "user not found" }, { status: 401 });
 
     const body = await request.json();
-    console.log("LOG INPUT:", body);
     const error = validateLogInput(body);
     if (error) return Response.json({ error }, { status: 400 });
 
@@ -46,7 +45,6 @@ export async function POST(request: Request) {
       ...existingLogs.map((log) => log.outcome),
       body.outcome as Outcome,
     ]);
-    console.log("POST STAGE:", postLogStage);
     const requiresRisk = postLogStage === "EVALUATION" || postLogStage === "COMMITTED" || postLogStage === "LOST";
     const disallowAnyRisk = postLogStage === "CLOSED";
 
@@ -118,6 +116,7 @@ export async function POST(request: Request) {
         where: { id: body.dealId },
         data: {
           lastActivityAt: new Date(),
+          status: deal.status === DealStatus.EXPIRED ? DealStatus.ACTIVE : undefined,
           nextStepType: isPoReceived ? null : nextStepType,
           nextStepDate: isPoReceived ? null : nextStepDate,
           nextStepSource: isPoReceived ? null : nextStepSource,

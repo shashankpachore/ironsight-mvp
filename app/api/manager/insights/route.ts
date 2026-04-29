@@ -1,9 +1,10 @@
-import { Outcome, UserRole } from "@prisma/client";
+import { DealStatus, Outcome, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { buildDealWhere } from "@/lib/access";
 import { getActivityComplianceRows } from "@/lib/activity-compliance";
 import { getCurrentUser } from "@/lib/auth";
 import { requireRole } from "@/lib/authz";
+import { enforceExpiry, getActiveDeals, getExpiryWarning } from "@/lib/expiry";
 import { getDealStageFromOutcomes } from "@/lib/logic/stage";
 import { getDealMomentum } from "@/lib/momentum";
 import { prisma } from "@/lib/prisma";
@@ -32,6 +33,28 @@ type RepHealthRow = {
 type Intervention = {
   dealId: string;
   suggestedAction: string;
+};
+
+type ExpiredDealsSummary = {
+  totalExpiredDeals: number;
+  totalExpiredValue: number;
+  byRep: Array<{
+    ownerId: string;
+    ownerName: string;
+    expiredDeals: number;
+    expiredValue: number;
+  }>;
+};
+
+type ExpiringSoonDealsSummary = {
+  totalExpiringSoon: number;
+  totalValue: number;
+  byRep: Array<{
+    ownerId: string;
+    ownerName: string;
+    count: number;
+    value: number;
+  }>;
 };
 
 function getAtRiskReason(params: {
@@ -94,22 +117,60 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const where = await buildDealWhere(user);
+  const accessWhere = await buildDealWhere(user);
 
   const deals = await prisma.deal.findMany({
-    where,
+    where: {
+      ...accessWhere,
+      status: DealStatus.ACTIVE,
+    },
     select: {
       id: true,
       value: true,
       lastActivityAt: true,
+      status: true,
       nextStepDate: true,
       ownerId: true,
       owner: { select: { name: true } },
       account: { select: { name: true } },
     },
   });
+  const activeDeals = getActiveDeals(await enforceExpiry(deals));
+  const expiredDeals = await prisma.deal.findMany({
+    where: {
+      ...accessWhere,
+      status: DealStatus.EXPIRED,
+    },
+    select: {
+      ownerId: true,
+      value: true,
+      owner: { select: { name: true } },
+    },
+  });
+  const expiredByOwner = new Map<
+    string,
+    { ownerId: string; ownerName: string; expiredDeals: number; expiredValue: number }
+  >();
+  for (const deal of expiredDeals) {
+    const row = expiredByOwner.get(deal.ownerId) ?? {
+      ownerId: deal.ownerId,
+      ownerName: deal.owner?.name ?? "Unknown",
+      expiredDeals: 0,
+      expiredValue: 0,
+    };
+    row.expiredDeals += 1;
+    row.expiredValue += deal.value;
+    expiredByOwner.set(deal.ownerId, row);
+  }
+  const expiredDealsSummary: ExpiredDealsSummary = {
+    totalExpiredDeals: expiredDeals.length,
+    totalExpiredValue: expiredDeals.reduce((sum, deal) => sum + deal.value, 0),
+    byRep: [...expiredByOwner.values()].sort(
+      (a, b) => b.expiredDeals - a.expiredDeals || b.expiredValue - a.expiredValue,
+    ),
+  };
 
-  const dealIds = deals.map((d) => d.id);
+  const dealIds = activeDeals.map((d) => d.id);
   const logs = dealIds.length
     ? await prisma.interactionLog.findMany({
         where: { dealId: { in: dealIds } },
@@ -129,7 +190,7 @@ export async function GET(request: Request) {
     outcomesByDealId.set(log.dealId, set);
   }
 
-  const dealSignals = deals.map((deal) => {
+  const dealSignals = activeDeals.map((deal) => {
     const dealLogs = logsByDealId.get(deal.id) ?? [];
     const momentum = getDealMomentum(
       { lastActivityAt: deal.lastActivityAt, nextStepDate: deal.nextStepDate },
@@ -137,8 +198,31 @@ export async function GET(request: Request) {
     );
     const outcomes = outcomesByDealId.get(deal.id) ?? new Set<Outcome>();
     const stage = getDealStageFromOutcomes([...outcomes]);
-    return { deal, momentum, outcomes, stage };
+    const expiryWarning = getExpiryWarning(momentum.daysSinceLastActivity);
+    return { deal, momentum, outcomes, stage, expiryWarning };
   });
+
+  const expiringSoonByOwner = new Map<
+    string,
+    { ownerId: string; ownerName: string; count: number; value: number }
+  >();
+  for (const signal of dealSignals) {
+    if (signal.expiryWarning !== "EXPIRING_SOON") continue;
+    const row = expiringSoonByOwner.get(signal.deal.ownerId) ?? {
+      ownerId: signal.deal.ownerId,
+      ownerName: signal.deal.owner?.name ?? "Unknown",
+      count: 0,
+      value: 0,
+    };
+    row.count += 1;
+    row.value += signal.deal.value;
+    expiringSoonByOwner.set(signal.deal.ownerId, row);
+  }
+  const expiringSoonDealsSummary: ExpiringSoonDealsSummary = {
+    totalExpiringSoon: [...expiringSoonByOwner.values()].reduce((sum, row) => sum + row.count, 0),
+    totalValue: [...expiringSoonByOwner.values()].reduce((sum, row) => sum + row.value, 0),
+    byRep: [...expiringSoonByOwner.values()].sort((a, b) => b.count - a.count || b.value - a.value),
+  };
 
   const atRiskDeals: AtRiskDeal[] = dealSignals
     .filter((x) => x.momentum.momentumStatus === "CRITICAL")
@@ -232,6 +316,8 @@ export async function GET(request: Request) {
     atRiskDeals,
     repHealth,
     interventions,
+    expiredDealsSummary,
+    expiringSoonDealsSummary,
   });
 }
 

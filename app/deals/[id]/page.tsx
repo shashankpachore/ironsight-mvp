@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { UserRole } from "@prisma/client";
 import { DealValueEditor } from "@/components/deal-value-editor";
-import { getDealStage } from "@/lib/deals";
+import { getDealStageFromLogs } from "@/lib/deals";
 import { NEXT_STEP_LABELS, type NextStepTypeValue } from "@/lib/next-step";
 import { prisma } from "@/lib/prisma";
 import { SESSION_COOKIE_NAME } from "@/lib/auth";
@@ -34,7 +34,7 @@ export default async function DealDetailPage({
   });
 
   if (!deal) return <main className="p-6">Deal not found.</main>;
-  const stage = await getDealStage(id);
+  const stage = getDealStageFromLogs(deal.logs);
   const canEditValue =
     currentUser?.role === UserRole.ADMIN ||
     currentUser?.id === deal.ownerId ||

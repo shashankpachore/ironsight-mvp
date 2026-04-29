@@ -2,7 +2,7 @@ import { AccountStatus, Outcome, RiskCategory, StakeholderType, UserRole } from 
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as postLogRoute } from "../app/api/logs/route";
 import { getSuggestedNextStep } from "../lib/next-step";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 
 async function seedApprovedAccount(params: { adminId: string; assigneeId: string }) {

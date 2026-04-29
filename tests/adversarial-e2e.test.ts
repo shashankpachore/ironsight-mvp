@@ -64,7 +64,7 @@ describe("adversarial e2e", () => {
     expect(res.status).toBe(403);
   });
 
-  it("conflicting signals force stage downgrade/access", async () => {
+  it("dropped deal moves to LOST even after proposal", async () => {
     await logInteraction({ byUserId: users.rep.id, dealId: repDealId, outcome: Outcome.PROPOSAL_SHARED, stakeholderType: StakeholderType.DECISION_MAKER });
     await logInteraction({ byUserId: users.rep.id, dealId: repDealId, outcome: Outcome.DEAL_DROPPED });
     const stageRes = await stageGET(
@@ -72,6 +72,6 @@ describe("adversarial e2e", () => {
       { params: Promise.resolve({ id: repDealId }) },
     );
     const body = await json<{ stage: string }>(stageRes);
-    expect(body.stage).toBe("ACCESS");
+    expect(body.stage).toBe("LOST");
   });
 });

@@ -16,8 +16,23 @@ export default defineConfig({
     setupFiles: [path.resolve(__dirname, "tests/vitest.setup.ts")],
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "."),
-    },
+    alias: [
+      {
+        find: /^@\/lib\/prisma$/,
+        replacement: path.resolve(__dirname, "lib/test-prisma.ts"),
+      },
+      {
+        find: /^\.\.\/lib\/prisma$/,
+        replacement: path.resolve(__dirname, "lib/test-prisma.ts"),
+      },
+      {
+        find: /^\.\/prisma$/,
+        replacement: path.resolve(__dirname, "lib/test-prisma.ts"),
+      },
+      {
+        find: "@",
+        replacement: path.resolve(__dirname, "."),
+      },
+    ],
   },
 });

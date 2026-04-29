@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type SessionUser = {
@@ -32,7 +32,9 @@ export function TestSessionProvider({
   const [sessionError, setSessionError] = useState("");
 
   useEffect(() => {
-    setCurrentUser(initialCurrentUser);
+    queueMicrotask(() => {
+      setCurrentUser(initialCurrentUser);
+    });
   }, [initialCurrentUser]);
 
   async function logout() {
@@ -50,7 +52,7 @@ export function TestSessionProvider({
     router.refresh();
   }
 
-  const header: Record<string, string> = {};
+  const header = useMemo<Record<string, string>>(() => ({}), []);
   const value: SessionContextValue = { currentUser, header, sessionError, logout };
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

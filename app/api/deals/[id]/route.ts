@@ -4,40 +4,61 @@ import { assertDealAccess, canAccessAssignedToId } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/authz";
-import { getDealStage, getMissingSignals } from "@/lib/deals";
+import { getDealStageFromLogs, getExpiryWarning, getMissingSignalsFromLogs } from "@/lib/deals";
+import { enforceExpiry } from "@/lib/expiry";
+import { getDealMomentum } from "@/lib/momentum";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const user = await getCurrentUser(_request);
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
+  const includeLogs = new URL(request.url).searchParams.get("includeLogs") === "true";
 
   const deal = await prisma.deal.findUnique({
     where: { id },
     include: {
       account: true,
-      logs: {
-        include: { risks: true },
-        orderBy: { createdAt: "desc" },
-      },
     },
   });
 
   if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+  const [enforcedDeal] = await enforceExpiry([deal]);
   const canRead = await canAccessAssignedToId(user, deal.account.assignedToId);
   if (!canRead) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const [stage, missingSignals] = await Promise.all([
-    getDealStage(id),
-    getMissingSignals(id),
-  ]);
+  const logs = includeLogs
+    ? await prisma.interactionLog.findMany({
+        where: { dealId: id },
+        include: { risks: true },
+        orderBy: { createdAt: "desc" },
+      })
+    : await prisma.interactionLog.findMany({
+        where: { dealId: id },
+        select: { createdAt: true, outcome: true },
+        orderBy: { createdAt: "desc" },
+      });
+  const stage = getDealStageFromLogs(logs);
+  const missingSignals = getMissingSignalsFromLogs(enforcedDeal.lastActivityAt, logs);
+  const momentum = getDealMomentum(
+    { lastActivityAt: enforcedDeal.lastActivityAt, nextStepDate: enforcedDeal.nextStepDate },
+    logs.map((log) => ({ createdAt: log.createdAt, outcome: log.outcome })),
+  );
+  const expiryWarning = getExpiryWarning(momentum.daysSinceLastActivity);
 
-  return NextResponse.json({ ...deal, stage, missingSignals });
+  return NextResponse.json({
+    ...enforcedDeal,
+    ...(includeLogs ? { logs } : {}),
+    stage,
+    missingSignals,
+    expiryWarning,
+    daysToExpiry: expiryWarning === "EXPIRING_SOON" ? 45 - momentum.daysSinceLastActivity : null,
+  });
 }
 
 export async function PATCH(

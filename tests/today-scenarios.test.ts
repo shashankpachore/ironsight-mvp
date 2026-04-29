@@ -2,7 +2,7 @@ import { AccountStatus, InteractionType, Outcome, StakeholderType } from "@prism
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as getTodayRoute } from "../app/api/today/route";
 import { formatYmdInIST, addDaysYmd, istYmdToUtcStart } from "../lib/ist-time";
-import { prisma } from "../lib/test-prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { resetDbAndSeedUsers, makeRequest } from "./helpers";
 
 const BASE_NOW = new Date("2026-01-10T10:00:00.000Z");

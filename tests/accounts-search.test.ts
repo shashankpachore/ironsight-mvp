@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { GET as searchAccountsRoute } from "../app/api/accounts/search/route";
 import { AccountStatus } from "@prisma/client";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import {
   approveAccount,
   assignAccount,

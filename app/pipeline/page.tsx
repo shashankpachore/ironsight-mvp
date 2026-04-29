@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { useTestSession } from "@/components/test-session-bar";
+import { getPipelineQueryKey, getPipelineUrl, usePipeline } from "@/hooks/usePipeline";
+import { apiGet } from "@/lib/api";
 import { formatInr } from "@/lib/currency";
+import { PRODUCT_OPTIONS } from "@/lib/products";
 
 type StageSummary = { count: number; value: number };
 type PipelineTotals = {
@@ -44,10 +48,12 @@ type ManagerBreakdownRow = {
 type TotalPipelineAccumulator = Omit<ManagerBreakdownRow, "managerId" | "managerName">;
 
 type PipelineResponse = PipelineTotals | {
+  pipeline?: PipelineTotals;
   totals: PipelineTotals;
   outcomes: OutcomeSummary;
   repPipelines: ManagerRepPipeline[];
   personalPipeline?: PersonalPipeline;
+  managerBreakdown?: ManagerBreakdownRow[];
 };
 type PipelineStage = keyof PipelineTotals;
 type DrilldownStage = PipelineStage | keyof OutcomeSummary;
@@ -69,6 +75,8 @@ type DrilldownDeal = {
   value: number;
   stage: string;
   lastActivityAt: string;
+  expiryWarning?: "EXPIRED" | "EXPIRING_SOON" | null;
+  daysToExpiry?: number | null;
   account: { name: string };
 };
 type DrilldownState = {
@@ -79,7 +87,8 @@ type DrilldownState = {
 type DrilldownFilters = { ownerId?: string; managerId?: string; unassigned?: boolean };
 
 export default function PipelinePage() {
-  const { header, currentUser } = useTestSession();
+  const { currentUser } = useTestSession();
+  const queryClient = useQueryClient();
   const [data, setData] = useState<PipelineTotals | null>(null);
   const [outcomes, setOutcomes] = useState<OutcomeSummary | null>(null);
   const [repPipelines, setRepPipelines] = useState<ManagerRepPipeline[]>([]);
@@ -88,25 +97,41 @@ export default function PipelinePage() {
   const [error, setError] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [drilldownByKey, setDrilldownByKey] = useState<Record<string, DrilldownState>>({});
+  const [selectedProduct, setSelectedProduct] = useState("");
+  usePipeline({ product: selectedProduct, enabled: false });
 
-  async function loadPipeline() {
+  async function loadPipeline(productOverride = selectedProduct) {
     setError("");
-    const res = await fetch("/api/pipeline?includeRepBreakdown=1&includeOutcomes=1", { headers: header });
-    const body = await res.json();
-    if (!res.ok) {
-      setError(body.error || "Failed to load pipeline");
+    setExpandedKey(null);
+    setDrilldownByKey({});
+    let body: PipelineResponse;
+    try {
+      body = await queryClient.fetchQuery({
+        queryKey: getPipelineQueryKey(productOverride),
+        queryFn: () => apiGet<PipelineResponse>(getPipelineUrl(productOverride)),
+      });
+    } catch {
+      setError("Failed to load pipeline");
       return;
     }
     if ("totals" in (body as PipelineResponse)) {
       const typed = body as {
+        pipeline?: PipelineTotals;
         totals: PipelineTotals;
         outcomes: OutcomeSummary;
         repPipelines: ManagerRepPipeline[];
         personalPipeline?: PersonalPipeline;
+        managerBreakdown?: ManagerBreakdownRow[];
       };
-      setData(typed.totals);
+      setData(typed.totals ?? typed.pipeline ?? null);
       setOutcomes(typed.outcomes ?? null);
-      if (currentUser?.role === "MANAGER" || currentUser?.role === "ADMIN") {
+      if (currentUser?.role === "ADMIN") {
+        setRepPipelines([]);
+        setPersonalPipeline(null);
+        setManagerBreakdown(typed.managerBreakdown ?? []);
+        return;
+      }
+      if (currentUser?.role === "MANAGER") {
         setPersonalPipeline(typed.personalPipeline ?? null);
       } else {
         setPersonalPipeline(null);
@@ -123,18 +148,6 @@ export default function PipelinePage() {
       setOutcomes(null);
       setRepPipelines([]);
       setPersonalPipeline(null);
-    }
-
-    if (currentUser?.role === "ADMIN") {
-      const managerRes = await fetch("/api/pipeline/manager-breakdown", { headers: header });
-      const managerBody = await managerRes.json();
-      if (!managerRes.ok) {
-        setError(managerBody.error || "Failed to load manager breakdown");
-        return;
-      }
-      const managerData = normalizeManagerData(managerBody);
-      setManagerBreakdown(managerData);
-      return;
     }
     setPersonalPipeline(null);
     setManagerBreakdown([]);
@@ -164,6 +177,12 @@ export default function PipelinePage() {
                     Last activity:{" "}
                     {deal.lastActivityAt ? new Date(deal.lastActivityAt).toLocaleString() : "N/A"}
                   </span>
+                  {deal.expiryWarning === "EXPIRING_SOON" && typeof deal.daysToExpiry === "number" ? (
+                    <span className="rounded border border-yellow-300 bg-yellow-50 px-2 py-0.5 text-xs font-medium text-orange-700">
+                      ⚠️ Expiring in {deal.daysToExpiry} day
+                      {deal.daysToExpiry === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -216,18 +235,14 @@ export default function PipelinePage() {
     if (filters?.ownerId) params.set("ownerId", filters.ownerId);
     if (filters?.managerId) params.set("managerId", filters.managerId);
     if (filters?.unassigned) params.set("unassigned", "1");
-    const res = await fetch(`/api/deals?${params.toString()}`, { headers: header });
-    let body: unknown = {};
+    if (selectedProduct) params.set("product", selectedProduct);
+    let body: unknown;
     try {
-      body = await res.json();
+      body = await apiGet(`/api/deals?${params.toString()}`);
     } catch {
-      body = {};
-    }
-    if (!res.ok) {
-      const err = (body as { error?: string }).error ?? "Failed to load deals";
       setDrilldownByKey((prev) => ({
         ...prev,
-        [key]: { loading: false, error: err, deals: [] },
+        [key]: { loading: false, error: "Failed to load deals", deals: [] },
       }));
       return;
     }
@@ -287,60 +302,6 @@ export default function PipelinePage() {
       count: typeof cell?.count === "number" && Number.isFinite(cell.count) ? cell.count : 0,
       value: typeof cell?.value === "number" && Number.isFinite(cell.value) ? cell.value : 0,
     };
-  }
-
-  function normalizeManagerData(input: unknown): ManagerBreakdownRow[] {
-    if (!Array.isArray(input)) return [];
-    return input.map((row) => {
-      const typed = (row ?? {}) as Record<string, unknown>;
-      const rawStages = (typed.stages ?? {}) as Record<string, unknown>;
-      const stages = PIPELINE_STAGES.reduce((acc, stage) => {
-        const raw = rawStages[stage];
-        if (typeof raw === "number" && Number.isFinite(raw)) {
-          acc[stage] = { count: raw, value: 0 };
-          return acc;
-        }
-        if (raw && typeof raw === "object") {
-          const count = (raw as { count?: unknown }).count;
-          const value = (raw as { value?: unknown }).value;
-          acc[stage] = {
-            count: typeof count === "number" && Number.isFinite(count) ? count : 0,
-            value: typeof value === "number" && Number.isFinite(value) ? value : 0,
-          };
-          return acc;
-        }
-        acc[stage] = { count: 0, value: 0 };
-        return acc;
-      }, {} as Record<PipelineStage, StageSummary>);
-
-      const rawOutcomes = (typed.outcomes ?? {}) as Record<string, unknown>;
-      const normalizeOutcome = (key: keyof OutcomeSummary): StageSummary => {
-        const raw = rawOutcomes[key];
-        if (raw && typeof raw === "object") {
-          const count = (raw as { count?: unknown }).count;
-          const value = (raw as { value?: unknown }).value;
-          return {
-            count: typeof count === "number" && Number.isFinite(count) ? count : 0,
-            value: typeof value === "number" && Number.isFinite(value) ? value : 0,
-          };
-        }
-        return { count: 0, value: 0 };
-      };
-
-      return {
-        managerId: typeof typed.managerId === "string" ? typed.managerId : "",
-        managerName: typeof typed.managerName === "string" ? typed.managerName : "Unknown",
-        stages,
-        totalValue:
-          typeof typed.totalValue === "number" && Number.isFinite(typed.totalValue)
-            ? typed.totalValue
-            : 0,
-        outcomes: {
-          CLOSED: normalizeOutcome("CLOSED"),
-          LOST: normalizeOutcome("LOST"),
-        },
-      };
-    });
   }
 
   function formatStageCell(summary: StageSummary | null | undefined) {
@@ -529,6 +490,32 @@ export default function PipelinePage() {
 
       <h1 className="text-2xl font-semibold">Pipeline</h1>
 
+      <section className="border rounded-lg p-4 space-y-2">
+        <label className="block text-sm font-medium" htmlFor="pipeline-product-filter">
+          Filter by Product
+        </label>
+        <select
+          id="pipeline-product-filter"
+          className="w-full max-w-sm rounded border px-3 py-2 text-sm"
+          value={selectedProduct}
+          onChange={(e) => {
+            const product = e.target.value;
+            setSelectedProduct(product);
+            void loadPipeline(product);
+          }}
+        >
+          <option value="">All Products</option>
+          {PRODUCT_OPTIONS.map((product) => (
+            <option key={product} value={product}>
+              {product}
+            </option>
+          ))}
+        </select>
+        {selectedProduct ? (
+          <p className="text-sm text-gray-700">Showing pipeline for: {selectedProduct}</p>
+        ) : null}
+      </section>
+
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {!data ? <p>Click &quot;Refresh pipeline&quot; to load data.</p> : (
         <div className="space-y-4">
@@ -712,7 +699,7 @@ export default function PipelinePage() {
             </section>
           ) : null}
 
-          {currentUser?.role === "MANAGER" || currentUser?.role === "ADMIN" ? (
+          {currentUser?.role === "MANAGER" ? (
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">My Personal Pipeline</h2>
               <div className="border rounded-lg p-4 space-y-2">

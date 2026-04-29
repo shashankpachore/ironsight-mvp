@@ -6,7 +6,7 @@ import { InteractionType, Outcome, RiskCategory, StakeholderType, UserRole } fro
 import { defaultNextStepRequestFields } from "../lib/next-step";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("adversarial role mutation scenarios", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;

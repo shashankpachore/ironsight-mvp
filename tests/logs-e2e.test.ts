@@ -30,9 +30,9 @@ describe("logs e2e", () => {
     expect(res.status).toBe(404);
   });
 
-  it("must include risk", async () => {
+  it("allows no risk while deal remains in ACCESS", async () => {
     const res = await logInteraction({ byUserId: users.rep.id, dealId: repDealId, risks: [] });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
   });
 
   it("max 3 risks enforced", async () => {

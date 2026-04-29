@@ -3,7 +3,7 @@ import { AccountStatus, AuditAction, AuditEntityType } from "@prisma/client";
 import { GET as getDealsRoute } from "../app/api/deals/route";
 import { GET as getDealByIdRoute } from "../app/api/deals/[id]/route";
 import { PATCH as patchDealByIdRoute } from "../app/api/deals/[id]/route";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { json, makeRequest, resetDbAndSeedUsers, createAccount, approveAccount, assignAccount, createDeal, uniqueName, getDeal } from "./helpers";
 
 describe("deals api - integrity and misuse coverage", () => {

@@ -1,8 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
-import { useTestSession } from "@/components/test-session-bar";
+import { useQueryClient } from "@tanstack/react-query";
+import { FormEvent, use, useEffect, useMemo, useState } from "react";
+import { useDeal } from "@/hooks/useDeal";
+import { useInteractionLogs } from "@/hooks/useInteractionLogs";
+import { apiPost } from "@/lib/api";
 import {
   type DealStage,
   INTERACTION_TYPES,
@@ -16,6 +19,7 @@ import {
   STAKEHOLDER_TYPES,
 } from "@/lib/domain";
 import { istYmdToUtcStart } from "@/lib/ist-time";
+import { getDealStageFromOutcomes } from "@/lib/logic/stage";
 import {
   NEXT_STEP_OPTIONS,
   type NextStepTypeValue,
@@ -31,9 +35,10 @@ export default function LogInteractionPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { id } = use(params);
   const router = useRouter();
-  const { header } = useTestSession();
-  const [interactionType, setInteractionType] = useState<
+  const queryClient = useQueryClient();
+  const [interactionType] = useState<
     (typeof INTERACTION_TYPES)[number]
   >(INTERACTION_TYPES[0]);
   const [outcome, setOutcome] = useState<(typeof OUTCOMES)[number]>(OUTCOMES[0]);
@@ -53,29 +58,16 @@ export default function LogInteractionPage({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [postLogStage, setPostLogStage] = useState<DealStage | null>(null);
+  const { data: deal } = useDeal(id);
+  const { data: interactionLogs } = useInteractionLogs(id);
 
-  useEffect(() => {
-    let mounted = true;
-    async function loadStage() {
-      try {
-        const { id } = await params;
-        const res = await fetch(`/api/deals/${id}/stage?postOutcome=${encodeURIComponent(outcome)}`, {
-          headers: header,
-        });
-        if (!res.ok) return;
-        const body = (await res.json()) as { stage?: DealStage };
-        if (!mounted || !body.stage) return;
-        setPostLogStage(body.stage);
-      } catch {
-        // Keep UI functional without stage-filtering if stage fetch fails.
-      }
-    }
-    void loadStage();
-    return () => {
-      mounted = false;
-    };
-  }, [header, outcome, params]);
+  const postLogStage = useMemo<DealStage | null>(() => {
+    if (!interactionLogs) return null;
+    return getDealStageFromOutcomes([
+      ...interactionLogs.map((log) => log.outcome),
+      outcome,
+    ]);
+  }, [interactionLogs, outcome]);
 
   function applyOutcomeSuggestion(nextOutcome: (typeof OUTCOMES)[number]) {
     if (nextOutcome === "PO_RECEIVED") {
@@ -112,7 +104,6 @@ export default function LogInteractionPage({
     }
     setSaving(true);
     setError("");
-    const { id } = await params;
     const payload: Record<string, unknown> = {
       dealId: id,
       interactionType,
@@ -127,18 +118,14 @@ export default function LogInteractionPage({
       payload.nextStepDate = istYmdToUtcStart(nextStepDateYmd).toISOString();
     }
 
-    const res = await fetch("/api/logs", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...header,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || "Failed to save log");
+    try {
+      await apiPost("/api/logs", payload);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["interactionLogs", id] }),
+        queryClient.invalidateQueries({ queryKey: ["deal", id] }),
+      ]);
+    } catch {
+      setError("Failed to save log");
       setSaving(false);
       return;
     }
@@ -158,9 +145,11 @@ export default function LogInteractionPage({
 
   const requiresNextStep = outcome !== "PO_RECEIVED";
   const activeStage = postLogStage;
-  const isClosedStage = activeStage === "CLOSED";
   const allowedRisksForStage = activeStage ? STAGE_RISK_MAP[activeStage] : null;
-  const allowedRiskSet = new Set<RiskCategoryValue>(allowedRisksForStage ?? []);
+  const allowedRiskSet = useMemo(
+    () => new Set<RiskCategoryValue>(allowedRisksForStage ?? []),
+    [allowedRisksForStage],
+  );
   const requiresRisks =
     activeStage === "EVALUATION" || activeStage === "COMMITTED" || activeStage === "LOST";
   const risksNotAllowed = activeStage === "CLOSED";
@@ -179,12 +168,21 @@ export default function LogInteractionPage({
 
   useEffect(() => {
     if (!allowedRisksForStage) return;
-    setRisks((prev) => prev.filter((risk) => allowedRiskSet.has(risk)));
-  }, [allowedRisksForStage]);
+    queueMicrotask(() => {
+      setRisks((prev) => prev.filter((risk) => allowedRiskSet.has(risk)));
+    });
+  }, [allowedRiskSet, allowedRisksForStage]);
 
   return (
     <main className="mx-auto max-w-3xl p-6">
       <h1 className="text-xl font-semibold mb-4">Log Interaction</h1>
+      {deal?.expiryWarning === "EXPIRING_SOON" &&
+      typeof deal.daysToExpiry === "number" ? (
+        <section className="mb-4 rounded border border-yellow-300 bg-yellow-50 p-3 text-sm text-orange-800">
+          ⚠️ This deal will expire in {deal.daysToExpiry} day
+          {deal.daysToExpiry === 1 ? "" : "s"} due to inactivity. Log an interaction to keep it active.
+        </section>
+      ) : null}
       <form onSubmit={onSubmit} className="border rounded-lg p-4 space-y-4">
         <div>
           <label className="block text-sm mb-1">Outcome</label>

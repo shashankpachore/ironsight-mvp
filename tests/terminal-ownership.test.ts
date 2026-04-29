@@ -11,7 +11,7 @@ import {
   uniqueName,
 } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("terminal ownership stamping", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;
@@ -37,6 +37,31 @@ describe("terminal ownership stamping", () => {
     dealId = deal.id;
   });
 
+  async function seedClosePrerequisites() {
+    await prisma.interactionLog.createMany({
+      data: [
+        {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.MET_DECISION_MAKER,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+        },
+        {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.BUDGET_DISCUSSED,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+        },
+        {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.PROPOSAL_SHARED,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+        },
+      ],
+    });
+  }
+
   it("stamps terminal LOST with owner at stamp time", async () => {
     await logInteraction({
       byUserId: users.rep.id,
@@ -58,6 +83,7 @@ describe("terminal ownership stamping", () => {
   });
 
   it("stamps terminal CLOSED with owner at stamp time", async () => {
+    await seedClosePrerequisites();
     await logInteraction({
       byUserId: users.rep.id,
       dealId,
@@ -149,6 +175,7 @@ describe("terminal ownership stamping", () => {
   });
 
   it("keeps CLOSED terminal ownership unchanged after reassignment", async () => {
+    await seedClosePrerequisites();
     await logInteraction({
       byUserId: users.rep.id,
       dealId,

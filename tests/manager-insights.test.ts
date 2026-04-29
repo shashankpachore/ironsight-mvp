@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { Outcome, UserRole } from "@prisma/client";
+import { DealStatus, Outcome } from "@prisma/client";
 import { GET as getInsights } from "../app/api/manager/insights/route";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 
 function daysFromNow(deltaDays: number): Date {
@@ -143,6 +143,135 @@ describe("manager insights api", () => {
     const repRow = body.repHealth.find((r) => r.repId === users.rep.id);
     expect(repRow?.criticalDeals).toBeGreaterThanOrEqual(6);
     expect(repRow?.color).toBe("RED");
+  });
+
+  it("returns expiredDealsSummary scoped by manager and sorted by expired deal count", async () => {
+    const repExpiredIds: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const deal = await json<{ id: string }>(
+        await createDeal({
+          byUserId: users.rep.id,
+          accountId: repAccountId,
+          name: uniqueName(`ExpiredRep-${i}`),
+          value: 10_000 + i,
+        }),
+      );
+      repExpiredIds.push(deal.id);
+      await prisma.deal.update({
+        where: { id: deal.id },
+        data: { status: DealStatus.EXPIRED },
+      });
+    }
+    const otherTeamDeal = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.rep2.id,
+        accountId: rep2AccountId,
+        name: uniqueName("ExpiredOtherTeam"),
+        value: 50_000,
+      }),
+    );
+    await prisma.deal.update({
+      where: { id: otherTeamDeal.id },
+      data: { status: DealStatus.EXPIRED },
+    });
+
+    const activeCritical = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.rep.id,
+        accountId: repAccountId,
+        name: uniqueName("ActiveCritical"),
+        value: 25_000,
+      }),
+    );
+    await prisma.deal.update({
+      where: { id: activeCritical.id },
+      data: { lastActivityAt: daysFromNow(-12), nextStepDate: daysFromNow(2), nextStepType: "FOLLOW_UP" },
+    });
+
+    const res = await getInsights(
+      makeRequest("http://localhost/api/manager/insights", { userId: users.manager.id }),
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{
+      atRiskDeals: Array<{ dealId: string }>;
+      expiredDealsSummary: {
+        totalExpiredDeals: number;
+        totalExpiredValue: number;
+        byRep: Array<{
+          ownerId: string;
+          ownerName: string;
+          expiredDeals: number;
+          expiredValue: number;
+        }>;
+      };
+      expiringSoonDealsSummary: {
+        totalExpiringSoon: number;
+        totalValue: number;
+        byRep: Array<{ ownerId: string; ownerName: string; count: number; value: number }>;
+      };
+    }>(res);
+
+    expect(body.expiredDealsSummary.totalExpiredDeals).toBe(2);
+    expect(body.expiredDealsSummary.totalExpiredValue).toBe(20_001);
+    expect(body.expiredDealsSummary.byRep[0]).toMatchObject({
+      ownerId: users.rep.id,
+      ownerName: "Rep",
+      expiredDeals: 2,
+      expiredValue: 20_001,
+    });
+    expect(body.expiredDealsSummary.byRep.some((row) => row.ownerId === users.rep2.id)).toBe(false);
+    for (const dealId of repExpiredIds) {
+      expect(body.atRiskDeals.map((deal) => deal.dealId)).not.toContain(dealId);
+    }
+    expect(body.atRiskDeals.map((deal) => deal.dealId)).toContain(activeCritical.id);
+  });
+
+  it("returns expiringSoonDealsSummary for active deals inactive 30-44 days", async () => {
+    const expiringSoon = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.rep.id,
+        accountId: repAccountId,
+        name: uniqueName("ExpiringSoon"),
+        value: 40_000,
+      }),
+    );
+    await prisma.deal.update({
+      where: { id: expiringSoon.id },
+      data: { status: DealStatus.ACTIVE, lastActivityAt: daysFromNow(-35), nextStepDate: daysFromNow(2) },
+    });
+    const expired = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.rep.id,
+        accountId: repAccountId,
+        name: uniqueName("AlreadyExpired"),
+        value: 90_000,
+      }),
+    );
+    await prisma.deal.update({
+      where: { id: expired.id },
+      data: { status: DealStatus.EXPIRED, lastActivityAt: daysFromNow(-46) },
+    });
+
+    const res = await getInsights(
+      makeRequest("http://localhost/api/manager/insights", { userId: users.manager.id }),
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{
+      expiringSoonDealsSummary: {
+        totalExpiringSoon: number;
+        totalValue: number;
+        byRep: Array<{ ownerId: string; ownerName: string; count: number; value: number }>;
+      };
+    }>(res);
+
+    expect(body.expiringSoonDealsSummary.totalExpiringSoon).toBe(1);
+    expect(body.expiringSoonDealsSummary.totalValue).toBe(40_000);
+    expect(body.expiringSoonDealsSummary.byRep[0]).toMatchObject({
+      ownerId: users.rep.id,
+      ownerName: "Rep",
+      count: 1,
+      value: 40_000,
+    });
   });
 });
 

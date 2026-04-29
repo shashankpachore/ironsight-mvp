@@ -4,6 +4,7 @@ import { UserRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { requireRole } from "@/lib/authz";
 import { getDealStage, getMissingSignals } from "@/lib/deals";
+import { enforceExpiry } from "@/lib/expiry";
 import { prisma } from "@/lib/prisma";
 
 function escapeCsv(value: string) {
@@ -24,9 +25,10 @@ export async function GET(request: Request) {
     },
     orderBy: { createdAt: "desc" },
   });
+  const enforcedDeals = await enforceExpiry(deals);
 
   const rows = await Promise.all(
-    deals.map(async (deal) => {
+    enforcedDeals.map(async (deal) => {
       const stage = await getDealStage(deal.id);
       const missingSignals = await getMissingSignals(deal.id);
       return [

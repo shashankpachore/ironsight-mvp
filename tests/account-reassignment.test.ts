@@ -5,7 +5,7 @@ import { InteractionType, Outcome, RiskCategory, StakeholderType } from "@prisma
 import { defaultNextStepRequestFields } from "../lib/next-step";
 import { approveAccount, assignAccount, createAccount, createDeal, json, logInteraction, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("account reassignment effects", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;
@@ -56,7 +56,7 @@ describe("account reassignment effects", () => {
       interactionType: InteractionType.CALL,
       outcome: Outcome.LOST_TO_COMPETITOR,
       stakeholderType: StakeholderType.DECISION_MAKER,
-      risks: [RiskCategory.COMPETITOR_INVOLVED],
+      risks: [RiskCategory.COMPETITOR_PREFERRED],
       notes: "Marked lost before reassignment",
     });
     const before = await prisma.deal.findUnique({ where: { id: dealId }, select: { ownerId: true } });
@@ -78,6 +78,28 @@ describe("account reassignment effects", () => {
   });
 
   it("closed transition stamps terminal ownership once", async () => {
+    await prisma.interactionLog.createMany({
+      data: [
+        {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.MET_DECISION_MAKER,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+        },
+        {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.BUDGET_DISCUSSED,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+        },
+        {
+          dealId,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.PROPOSAL_SHARED,
+          stakeholderType: StakeholderType.DECISION_MAKER,
+        },
+      ],
+    });
     const first = await logsPOST(
       makeRequest("http://localhost/api/logs", {
         method: "POST",

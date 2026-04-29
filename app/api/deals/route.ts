@@ -1,14 +1,16 @@
-import { AuditAction, AuditEntityType, Prisma, UserRole } from "@prisma/client";
+import { AuditAction, AuditEntityType, DealStatus, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { validateDealCreationAccess } from "@/lib/account-access";
 import { buildDealWhere } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
-import { getDealStage, getMissingSignals } from "@/lib/deals";
+import { getDealStageFromLogs, getMissingSignalsFromLogs } from "@/lib/deals";
 import { compareDealsByDisplayOrder } from "@/lib/deal-order";
+import { enforceExpiry, getActiveDeals, getExpiryWarning } from "@/lib/expiry";
 import { addDaysYmd, formatYmdInIST, istYmdToUtcStart } from "@/lib/ist-time";
 import { getDealMomentum } from "@/lib/momentum";
 import { prisma } from "@/lib/prisma";
+import { PRODUCT_OPTIONS } from "@/lib/products";
 import { scoreDeal } from "@/lib/ranking";
 import { validateDealInput } from "@/lib/validation";
 
@@ -89,6 +91,10 @@ export async function GET(request: Request) {
   const ownerId = url.searchParams.get("ownerId");
   const managerId = url.searchParams.get("managerId");
   const unassignedOnly = url.searchParams.get("unassigned") === "1";
+  const product = url.searchParams.get("product");
+  if (product && !PRODUCT_OPTIONS.includes(product)) {
+    return NextResponse.json({ error: "invalid product" }, { status: 400 });
+  }
   const stageFilters = new Set<string>();
   if (stage) stageFilters.add(stage);
   if (stages) {
@@ -111,7 +117,10 @@ export async function GET(request: Request) {
   const todayStartUtc = istYmdToUtcStart(todayYmd);
   const upcomingEndUtc = istYmdToUtcStart(addDaysYmd(todayYmd, 2));
 
-  const where = await buildDealWhere(user);
+  const where = {
+    ...(await buildDealWhere(user)),
+    status: DealStatus.ACTIVE,
+  };
 
   let deals: DealWithListRelations[];
   try {
@@ -140,7 +149,8 @@ export async function GET(request: Request) {
     console.error("Failed to load deals", err);
     return NextResponse.json({ error: "failed to load deals" }, { status: 500 });
   }
-  const dealIds = deals.map((deal) => deal.id);
+  const activeDeals = getActiveDeals(await enforceExpiry(deals));
+  const dealIds = activeDeals.map((deal) => deal.id);
   const logs = await prisma.interactionLog.findMany({
     where: { dealId: { in: dealIds } },
     select: { dealId: true, createdAt: true, outcome: true },
@@ -152,28 +162,31 @@ export async function GET(request: Request) {
     logsByDealId.set(log.dealId, arr);
   }
 
-  const enriched = await Promise.all(
-    deals.map(async (deal) => {
-      const stage = await getDealStage(deal.id);
-      const missingSignals = await getMissingSignals(deal.id);
-      const momentum = getDealMomentum(
-        { lastActivityAt: deal.lastActivityAt, nextStepDate: deal.nextStepDate },
-        logsByDealId.get(deal.id) ?? [],
-      );
-      const priorityScore = scoreDeal(
-        { value: deal.value, nextStepDate: deal.nextStepDate, stage },
-        momentum,
-        { todayStartUtc, upcomingEndUtc },
-      ).score;
-      return {
-        ...deal,
-        stage,
-        missingSignals,
-        momentumStatus: momentum.momentumStatus,
-        priorityScore,
-      };
-    }),
-  );
+  const enriched = activeDeals.map((deal) => {
+    const dealLogs = logsByDealId.get(deal.id) ?? [];
+    const stage = getDealStageFromLogs(dealLogs);
+    const missingSignals = getMissingSignalsFromLogs(deal.lastActivityAt, dealLogs);
+    const momentum = getDealMomentum(
+      { lastActivityAt: deal.lastActivityAt, nextStepDate: deal.nextStepDate },
+      dealLogs,
+    );
+    const expiryWarning = getExpiryWarning(momentum.daysSinceLastActivity);
+    const priorityScore = scoreDeal(
+      { value: deal.value, nextStepDate: deal.nextStepDate, stage },
+      momentum,
+      { todayStartUtc, upcomingEndUtc },
+    ).score;
+    return {
+      ...deal,
+      stage,
+      missingSignals,
+      momentumStatus: momentum.momentumStatus,
+      expiryWarning,
+      daysToExpiry:
+        expiryWarning === "EXPIRING_SOON" ? 45 - momentum.daysSinceLastActivity : null,
+      priorityScore,
+    };
+  });
 
   const sorted = [...enriched].sort(
     (a, b) => b.priorityScore - a.priorityScore || compareDealsByDisplayOrder(a, b),
@@ -187,6 +200,7 @@ export async function GET(request: Request) {
       if (!inManagerScope) return false;
     }
     if (unassignedOnly && deal.account.assignedToId) return false;
+    if (product && deal.name !== product) return false;
     return true;
   });
   return NextResponse.json(filtered);

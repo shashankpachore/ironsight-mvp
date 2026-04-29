@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Outcome, RiskCategory, StakeholderType } from "@prisma/client";
 import { GET as getLogsByDealRoute } from "../app/api/logs/[dealId]/route";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { json, makeRequest, resetDbAndSeedUsers, createAccount, approveAccount, assignAccount, createDeal, logInteraction, uniqueName } from "./helpers";
 
 describe("interaction logs - validation and abuse tests", () => {
@@ -31,9 +31,9 @@ describe("interaction logs - validation and abuse tests", () => {
     expect(res.status).toBe(404);
   });
 
-  it("cannot log without risk", async () => {
+  it("allows no risk while deal remains in ACCESS", async () => {
     const res = await logInteraction({ byUserId: users.rep.id, dealId: repDealId, risks: [] });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
   });
 
   it("cannot exceed 3 risks", async () => {

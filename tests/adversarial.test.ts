@@ -1,26 +1,15 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { Outcome, InteractionType, StakeholderType, RiskCategory } from "@prisma/client";
+import { beforeEach, describe, expect, it } from "vitest";
+import { AccountStatus, Outcome, InteractionType, StakeholderType, RiskCategory } from "@prisma/client";
 import { getDealStage, getMissingSignals } from "../lib/deals";
 import {
   validateDealInput,
   validateLogInput,
   validateOutcomeGuardrails,
 } from "../lib/validation";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
-const { prismaMock } = vi.hoisted(() => ({
-  prismaMock: {
-    interactionLog: {
-      findMany: vi.fn(),
-    },
-    deal: {
-      findUnique: vi.fn(),
-    },
-  },
-}));
-
-vi.mock("../lib/prisma", () => ({
-  prisma: prismaMock,
-}));
+let ownerId: string;
+let accountId: string;
 
 type Scenario = {
   key: string;
@@ -139,29 +128,80 @@ const scenarios: Scenario[] = [
   },
 ];
 
-function primeLogs(outcomes: Outcome[], daysAgo = 0) {
-  const createdAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-  prismaMock.interactionLog.findMany.mockResolvedValue(
-    outcomes.map((outcome) => ({ outcome, createdAt })),
-  );
+async function resetAdversarialDb() {
+  await prisma.interactionRisk.deleteMany();
+  await prisma.interactionLog.deleteMany();
+  await prisma.deal.deleteMany();
+  await prisma.account.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.user.updateMany({ data: { managerId: null } });
+  await prisma.user.deleteMany();
+
+  const owner = await prisma.user.create({
+    data: {
+      name: "Adversarial Owner",
+      email: `adversarial-${Date.now()}-${Math.random().toString(16).slice(2)}@ironsight.local`,
+      password: "test1234",
+      role: "REP",
+    },
+  });
+  const account = await prisma.account.create({
+    data: {
+      name: `Adversarial Account ${Date.now()}`,
+      normalized: `adversarial-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdById: owner.id,
+      assignedToId: owner.id,
+      status: AccountStatus.APPROVED,
+    },
+  });
+  ownerId = owner.id;
+  accountId = account.id;
 }
 
-function primeDeal(daysAgo = 0) {
-  const lastActivityAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-  prismaMock.deal.findUnique.mockResolvedValue({ lastActivityAt });
+async function createScenarioDeal(
+  key: string,
+  outcomes: Outcome[],
+  lastActivityAtDaysAgo = 0,
+  logsDaysAgo = 0,
+) {
+  const deal = await prisma.deal.create({
+    data: {
+      name: "Geneo ONE",
+      companyName: `Scenario ${key}`,
+      value: 10_000,
+      accountId,
+      ownerId,
+      lastActivityAt: new Date(Date.now() - lastActivityAtDaysAgo * 24 * 60 * 60 * 1000),
+    },
+  });
+  const createdAt = new Date(Date.now() - logsDaysAgo * 24 * 60 * 60 * 1000);
+  await prisma.interactionLog.createMany({
+    data: outcomes.map((outcome) => ({
+      dealId: deal.id,
+      interactionType: InteractionType.CALL,
+      outcome,
+      stakeholderType: StakeholderType.UNKNOWN,
+      createdAt,
+    })),
+  });
+  return deal.id;
 }
+
+beforeEach(async () => {
+  await resetAdversarialDb();
+});
 
 describe("adversarial stage + missing signal matrix (10 scenarios)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it.each(scenarios)("scenario: $key", async (scenario) => {
-    primeLogs(scenario.outcomes, scenario.logsDaysAgo ?? 0);
-    primeDeal(scenario.lastActivityAtDaysAgo ?? 0);
+    const dealId = await createScenarioDeal(
+      scenario.key,
+      scenario.outcomes,
+      scenario.lastActivityAtDaysAgo ?? 0,
+      scenario.logsDaysAgo ?? 0,
+    );
 
-    const stage = await getDealStage(`deal-${scenario.key}`);
-    const missingSignals = await getMissingSignals(`deal-${scenario.key}`);
+    const stage = await getDealStage(dealId);
+    const missingSignals = await getMissingSignals(dealId);
 
     expect(stage).toBe(scenario.expectedStage);
     for (const expectedSignal of scenario.expectedMissingSignals ?? []) {
@@ -171,29 +211,28 @@ describe("adversarial stage + missing signal matrix (10 scenarios)", () => {
 });
 
 describe("critical adversarial checks", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("A. FALSE PROGRESS: decision maker only should NOT jump to EVALUATION", async () => {
-    primeLogs([Outcome.MET_DECISION_MAKER]);
-    const stage = await getDealStage("false-progress");
+    const dealId = await createScenarioDeal("false-progress", [Outcome.MET_DECISION_MAKER]);
+    const stage = await getDealStage(dealId);
     expect(stage).not.toBe("EVALUATION");
     expect(stage).toBe("ACCESS");
   });
 
   it("B. NO MOVEMENT SPAM: repeated NO_RESPONSE should not increase stage and should flag missing", async () => {
-    primeLogs([
-      Outcome.NO_RESPONSE,
-      Outcome.NO_RESPONSE,
-      Outcome.NO_RESPONSE,
-      Outcome.NO_RESPONSE,
-    ]);
-    primeDeal(1);
+    const dealId = await createScenarioDeal(
+      "no-movement-spam",
+      [
+        Outcome.NO_RESPONSE,
+        Outcome.NO_RESPONSE,
+        Outcome.NO_RESPONSE,
+        Outcome.NO_RESPONSE,
+      ],
+      1,
+    );
 
     const [stage, missingSignals] = await Promise.all([
-      getDealStage("no-movement-spam"),
-      getMissingSignals("no-movement-spam"),
+      getDealStage(dealId),
+      getMissingSignals(dealId),
     ]);
 
     expect(stage).toBe("ACCESS");
@@ -202,16 +241,15 @@ describe("critical adversarial checks", () => {
   });
 
   it("C. MISSING CORE SIGNALS: should clearly flag missing DM + budget", async () => {
-    primeLogs([Outcome.MET_INFLUENCER]);
-    primeDeal(2);
-    const missingSignals = await getMissingSignals("missing-core-signals");
+    const dealId = await createScenarioDeal("missing-core-signals", [Outcome.MET_INFLUENCER], 2);
+    const missingSignals = await getMissingSignals(dealId);
     expect(missingSignals).toContain("Missing Decision Maker");
     expect(missingSignals).toContain("Missing Budget Discussion");
   });
 
   it("D. FAKE COMMITMENT guardrail: should reject direct DEAL_CONFIRMED without prior steps", async () => {
-    primeLogs([Outcome.DEAL_CONFIRMED]);
-    const stage = await getDealStage("fake-commitment");
+    const dealId = await createScenarioDeal("fake-commitment", [Outcome.DEAL_CONFIRMED]);
+    const stage = await getDealStage(dealId);
     expect(stage).not.toBe("COMMITTED");
   });
 
@@ -243,9 +281,13 @@ describe("critical adversarial checks", () => {
   });
 
   it("F. STALE DEAL: 7+ day inactivity should be flagged", async () => {
-    primeLogs([Outcome.MET_DECISION_MAKER, Outcome.BUDGET_DISCUSSED], 8);
-    primeDeal(8);
-    const missingSignals = await getMissingSignals("stale-deal");
+    const dealId = await createScenarioDeal(
+      "stale-deal",
+      [Outcome.MET_DECISION_MAKER, Outcome.BUDGET_DISCUSSED],
+      8,
+      8,
+    );
+    const missingSignals = await getMissingSignals(dealId);
     expect(missingSignals).toContain("No Recent Activity (7 days)");
   });
 

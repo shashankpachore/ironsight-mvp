@@ -5,7 +5,7 @@ import { POST as createUserRoute } from "../app/api/users/route";
 import { PATCH as patchUserRoute, DELETE as deleteUserRoute } from "../app/api/users/[id]/route";
 import { POST as importAccountsRoute } from "../app/api/accounts/import/route";
 import { json, makeRequest, resetDbAndSeedUsers } from "./helpers";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("audit + account import", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;

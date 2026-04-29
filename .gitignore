@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+*.db
+*.docx
+PRD.docx
+prisma/test.db
 
 # debug
 npm-debug.log*

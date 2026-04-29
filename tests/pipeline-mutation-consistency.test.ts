@@ -4,7 +4,7 @@ import { PATCH as userPATCH } from "../app/api/users/[id]/route";
 import { UserRole } from "@prisma/client";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 function totalCount(p: Record<string, { count: number }>) {
   return Object.values(p).reduce((sum, row) => sum + row.count, 0);

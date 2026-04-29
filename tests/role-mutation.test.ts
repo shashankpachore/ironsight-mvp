@@ -5,7 +5,7 @@ import { GET as usersGET } from "../app/api/users/route";
 import { GET as pipelineGET } from "../app/api/pipeline/route";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("role mutation behavior", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;

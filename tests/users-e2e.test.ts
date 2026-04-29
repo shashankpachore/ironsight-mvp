@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 import { GET as usersGET, POST as usersPOST } from "../app/api/users/route";
 import { PATCH as userPATCH, DELETE as userDELETE } from "../app/api/users/[id]/route";
 import { json, makeRequest, resetDbAndSeedUsers } from "./helpers";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("users e2e", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;

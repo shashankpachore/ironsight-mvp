@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { PRODUCT_OPTIONS } from "@/lib/products";
 import { useTestSession } from "./test-session-bar";
@@ -12,9 +13,9 @@ type SearchAccount = {
 
 export function CreateDealForm() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { header } = useTestSession();
   const headerRef = useRef(header);
-  headerRef.current = header;
 
   const [form, setForm] = useState({ name: PRODUCT_OPTIONS[0], accountId: "", value: "" });
   const [accountQuery, setAccountQuery] = useState("");
@@ -37,16 +38,24 @@ export function CreateDealForm() {
   }, []);
 
   useEffect(() => {
+    headerRef.current = header;
+  }, [header]);
+
+  useEffect(() => {
     const trimmed = accountQuery.trim();
     if (trimmed.length < 2) {
-      setAccountResults([]);
-      setAccountLoading(false);
-      setAccountDropdownOpen(false);
-      setAccountSearchCompleted(false);
+      queueMicrotask(() => {
+        setAccountResults([]);
+        setAccountLoading(false);
+        setAccountDropdownOpen(false);
+        setAccountSearchCompleted(false);
+      });
       return;
     }
 
-    setAccountDropdownOpen(true);
+    queueMicrotask(() => {
+      setAccountDropdownOpen(true);
+    });
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -118,6 +127,10 @@ export function CreateDealForm() {
     setAccountResults([]);
     setAccountDropdownOpen(false);
     setAccountSearchCompleted(false);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["deals"] }),
+      queryClient.invalidateQueries({ queryKey: ["pipeline"] }),
+    ]);
     router.refresh();
   }
 

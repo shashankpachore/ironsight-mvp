@@ -22,6 +22,8 @@ model User {
   terminalOwnedDeals Deal[]    @relation("TerminalDealOwner")
   manager           User?      @relation("ManagerReports", fields: [managerId], references: [id])
   reports           User[]     @relation("ManagerReports")
+
+  @@index([managerId, role])
 }
 
 model Account {
@@ -40,6 +42,8 @@ model Account {
   createdBy     User          @relation("CreatedAccounts", fields: [createdById], references: [id])
   requestedBy   User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id])
   deals         Deal[]
+
+  @@index([assignedToId, createdAt])
 }
 
 model Deal {
@@ -49,6 +53,7 @@ model Deal {
   value          Float
   accountId      String
   ownerId        String
+  status         DealStatus       @default(ACTIVE)
   terminalOwnerId String?
   terminalStage   DealTerminalStage?
   createdAt      DateTime         @default(now())
@@ -60,6 +65,10 @@ model Deal {
   owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   terminalOwner  User?            @relation("TerminalDealOwner", fields: [terminalOwnerId], references: [id], onDelete: SetNull)
   logs           InteractionLog[]
+
+  @@index([status, createdAt])
+  @@index([status, lastActivityAt])
+  @@index([ownerId])
 }
 
 model InteractionLog {
@@ -72,6 +81,8 @@ model InteractionLog {
   createdAt       DateTime          @default(now())
   deal            Deal              @relation(fields: [dealId], references: [id], onDelete: Cascade)
   risks           InteractionRisk[]
+
+  @@index([dealId, createdAt])
 }
 
 model InteractionRisk {
@@ -108,6 +119,11 @@ enum AccountStatus {
 enum AccountType {
   SCHOOL
   PARTNER
+}
+
+enum DealStatus {
+  ACTIVE
+  EXPIRED
 }
 
 enum AuditEntityType {

@@ -7,7 +7,7 @@ import { InteractionType, Outcome, RiskCategory, StakeholderType } from "@prisma
 import { defaultNextStepRequestFields } from "../lib/next-step";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 describe("manager/account reassignment stress tests", () => {
   let users: Awaited<ReturnType<typeof resetDbAndSeedUsers>>;

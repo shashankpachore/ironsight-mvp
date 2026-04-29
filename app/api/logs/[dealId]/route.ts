@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canAccessAssignedToId } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
+import { enforceExpiry } from "@/lib/expiry";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(
@@ -16,6 +17,7 @@ export async function GET(
     include: { account: true },
   });
   if (!deal) return NextResponse.json({ error: "deal not found" }, { status: 404 });
+  await enforceExpiry([deal]);
   const canRead = await canAccessAssignedToId(user, deal.account.assignedToId);
   if (!canRead) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });

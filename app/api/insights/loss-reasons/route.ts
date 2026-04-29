@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { requireRole } from "@/lib/authz";
 import { getDealStageFromOutcomes, stageBeforeLoss } from "@/lib/logic/stage";
 import type { OutcomeValue } from "@/lib/domain";
+import { enforceExpiry } from "@/lib/expiry";
 import { prisma } from "@/lib/prisma";
 
 type StageBucket = "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED";
@@ -44,9 +45,9 @@ export async function GET(request: Request) {
 
   const deals = await prisma.deal.findMany({
     where,
-    select: { id: true },
+    select: { id: true, lastActivityAt: true, status: true },
   });
-  const dealIds = deals.map((d) => d.id);
+  const dealIds = (await enforceExpiry(deals)).map((d) => d.id);
 
   if (dealIds.length === 0) {
     return NextResponse.json({

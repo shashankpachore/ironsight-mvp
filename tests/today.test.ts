@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Outcome, UserRole } from "@prisma/client";
 import { GET as getTodayRoute } from "../app/api/today/route";
 import { addDaysYmd, formatYmdInIST, istYmdToUtcStart } from "../lib/ist-time";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { approveAccount, assignAccount, createAccount, createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 
 function dayOffset(days: number): Date {

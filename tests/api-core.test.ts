@@ -2,7 +2,7 @@ import { AccountStatus, InteractionType, Outcome, RiskCategory, StakeholderType 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { POST as postLogRoute } from "../app/api/logs/route";
 import { GET as getTodayRoute } from "../app/api/today/route";
-import { prisma } from "../lib/test-prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { makeRequest, resetDbAndSeedUsers, type SeededUsers } from "./helpers";
 
 function daysFromNow(deltaDays: number) {
@@ -196,7 +196,7 @@ describe("api core - next step enforcement and today", () => {
             interactionType: InteractionType.CALL,
             outcome: Outcome.DEMO_DONE,
             stakeholderType: StakeholderType.DECISION_MAKER,
-            risks: [RiskCategory.NO_ACCESS_TO_DM],
+            risks: [RiskCategory.BUDGET_NOT_CONFIRMED],
             nextStepType: "SEND_PRICING",
             nextStepDate,
           },

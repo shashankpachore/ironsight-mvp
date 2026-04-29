@@ -5,7 +5,7 @@ import { GET as getAuditRoute } from "../app/api/audit/route";
 import { GET as getComplianceRoute } from "../app/api/activity/compliance/route";
 import { GET as getTodayRoute } from "../app/api/today/route";
 import { POST as postLogsRoute } from "../app/api/logs/route";
-import { prisma } from "../lib/test-prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { makeRequest, resetDbAndSeedUsers } from "./helpers";
 
 function daysFromNow(deltaDays: number) {

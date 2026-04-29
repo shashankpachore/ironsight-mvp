@@ -4,7 +4,7 @@ import { GET as pipelineGET } from "../app/api/pipeline/route";
 import { GET as managerBreakdownGET } from "../app/api/pipeline/manager-breakdown/route";
 import { approveAccount, assignAccount, createAccount, createDeal, json, logInteraction, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 
 function totalCount(p: Record<string, { count: number }>) {
   return Object.values(p).reduce((sum, row) => sum + row.count, 0);

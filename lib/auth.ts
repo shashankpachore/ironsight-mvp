@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
-import { UserRole } from "@prisma/client";
+import { UserRole, type User } from "@prisma/client";
 import { prisma } from "./prisma";
 
 export const SESSION_COOKIE_NAME = "ironsight_user_id";
 const BCRYPT_ROUNDS = 10;
+const currentUserByRequest = new WeakMap<Request, Promise<User | null>>();
 
 export const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -25,34 +26,26 @@ export function parseCookieValue(request: Request, key: string) {
 }
 
 export async function getCurrentUser(request: Request) {
-  // #region agent log
-  void fetch("http://127.0.0.1:7349/ingest/f75fb91c-b08c-4c55-bcd3-0ea5f9a7c254",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"098dde"},body:JSON.stringify({sessionId:"098dde",runId:"pre-fix",hypothesisId:"H1",location:"lib/auth.ts:28",message:"getCurrentUser entry",data:{testMode:process.env.TEST_MODE==="true",hasCookieHeader:Boolean(request.headers.get("cookie")),hasUserHeader:Boolean(request.headers.get("x-user-id"))},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
+  const cached = currentUserByRequest.get(request);
+  if (cached) return cached;
+
+  const lookup = resolveCurrentUser(request);
+  currentUserByRequest.set(request, lookup);
+  return lookup;
+}
+
+async function resolveCurrentUser(request: Request) {
   if (process.env.TEST_MODE === "true") {
     const headerUserId = request.headers.get("x-user-id");
     if (headerUserId) {
       const headerUser = await prisma.user.findUnique({ where: { id: headerUserId } });
-      if (headerUser) {
-        // #region agent log
-        void fetch("http://127.0.0.1:7349/ingest/f75fb91c-b08c-4c55-bcd3-0ea5f9a7c254",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"098dde"},body:JSON.stringify({sessionId:"098dde",runId:"pre-fix",hypothesisId:"H1",location:"lib/auth.ts:34",message:"getCurrentUser header user resolved",data:{userId:headerUser.id,role:headerUser.role},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-        return headerUser;
-      }
+      if (headerUser) return headerUser;
     }
   }
 
   const cookieUserId = parseCookieValue(request, SESSION_COOKIE_NAME);
-  if (!cookieUserId) {
-    // #region agent log
-    void fetch("http://127.0.0.1:7349/ingest/f75fb91c-b08c-4c55-bcd3-0ea5f9a7c254",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"098dde"},body:JSON.stringify({sessionId:"098dde",runId:"pre-fix",hypothesisId:"H1",location:"lib/auth.ts:42",message:"getCurrentUser missing cookie user id",data:{cookieName:SESSION_COOKIE_NAME},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-    return null;
-  }
-  const cookieUser = await prisma.user.findUnique({ where: { id: cookieUserId } });
-  // #region agent log
-  void fetch("http://127.0.0.1:7349/ingest/f75fb91c-b08c-4c55-bcd3-0ea5f9a7c254",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"098dde"},body:JSON.stringify({sessionId:"098dde",runId:"pre-fix",hypothesisId:"H1",location:"lib/auth.ts:48",message:"getCurrentUser cookie lookup result",data:{cookieUserIdPresent:Boolean(cookieUserId),resolvedUserId:cookieUser?.id??null,role:cookieUser?.role??null},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-  return cookieUser;
+  if (!cookieUserId) return null;
+  return prisma.user.findUnique({ where: { id: cookieUserId } });
 }
 
 export function hasRole(role: UserRole, allowed: UserRole[]) {

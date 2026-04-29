@@ -3,7 +3,7 @@ import { Outcome, StakeholderType } from "@prisma/client";
 import { GET as getStageRoute } from "../app/api/deals/[id]/stage/route";
 import { GET as getMissingRoute } from "../app/api/deals/[id]/missing-signals/route";
 import { GET as getExportRoute } from "../app/api/export/route";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import {
   approveAccount,
   assignAccount,
@@ -52,12 +52,12 @@ describe("adversarial full-suite: gaming, integrity, abuse", () => {
     expect(stage.stage).toBe("ACCESS");
   });
 
-  it("4) conflicting signals force ACCESS via negative override", async () => {
+  it("4) dropped deal moves to LOST even after proposal", async () => {
     await logInteraction({ byUserId: users.rep.id, dealId: repDealId, outcome: Outcome.PROPOSAL_SHARED, stakeholderType: StakeholderType.DECISION_MAKER });
     await logInteraction({ byUserId: users.rep.id, dealId: repDealId, outcome: Outcome.DEAL_DROPPED });
     const stageRes = await getStageRoute(makeRequest(`http://localhost/api/deals/${repDealId}/stage`, { userId: users.rep.id }), { params: Promise.resolve({ id: repDealId }) });
     const stage = await json<{ stage: string }>(stageRes);
-    expect(stage.stage).toBe("ACCESS");
+    expect(stage.stage).toBe("LOST");
   });
 
   it("5) missing signals flags DM and budget when absent", async () => {

@@ -1,5 +1,5 @@
 import { AccountStatus, InteractionType, Outcome, Prisma, RiskCategory, StakeholderType, UserRole } from "@prisma/client";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { POST as requestAccountRoute } from "../app/api/accounts/request/route";
 import { POST as approveAccountRoute } from "../app/api/accounts/[id]/approve/route";
@@ -153,6 +153,24 @@ export async function createDeal(params: {
   );
 }
 
+function defaultRisksForOutcome(outcome: Outcome): RiskCategory[] {
+  if (outcome === Outcome.PO_RECEIVED) return [];
+  if (outcome === Outcome.DEAL_CONFIRMED) return [RiskCategory.COMPETITOR_INVOLVED];
+  if (outcome === Outcome.LOST_TO_COMPETITOR) return [RiskCategory.COMPETITOR_PREFERRED];
+  if (outcome === Outcome.DEAL_DROPPED) return [RiskCategory.CHAMPION_NOT_STRONG];
+  if (outcome === Outcome.BUDGET_NOT_AVAILABLE) return [RiskCategory.BUDGET_INSUFFICIENT];
+  if (
+    outcome === Outcome.DEMO_DONE ||
+    outcome === Outcome.PRICING_REQUESTED ||
+    outcome === Outcome.PROPOSAL_SHARED ||
+    outcome === Outcome.BUDGET_CONFIRMED ||
+    outcome === Outcome.NEGOTIATION_STARTED
+  ) {
+    return [RiskCategory.BUDGET_NOT_CONFIRMED];
+  }
+  return [RiskCategory.NO_ACCESS_TO_DM];
+}
+
 export async function logInteraction(params: {
   byUserId: string;
   dealId: string;
@@ -172,7 +190,7 @@ export async function logInteraction(params: {
         interactionType: params.interactionType ?? InteractionType.CALL,
         outcome,
         stakeholderType: params.stakeholderType ?? StakeholderType.UNKNOWN,
-        risks: params.risks ?? [RiskCategory.NO_ACCESS_TO_DM],
+        risks: params.risks ?? defaultRisksForOutcome(outcome),
         notes: params.notes ?? "test",
         ...defaultNextStepRequestFields(outcome),
       },

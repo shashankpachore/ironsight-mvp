@@ -1,14 +1,26 @@
-import { UserRole } from "@prisma/client";
+import { DealStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { buildDealWhere } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
-import { getDealStage } from "@/lib/deals";
+import { getDealStageFromLogs } from "@/lib/deals";
+import { enforceExpiry, getActiveDeals } from "@/lib/expiry";
 import { prisma } from "@/lib/prisma";
+import { PRODUCT_OPTIONS } from "@/lib/products";
 
 type StageKey = "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED";
 type PipelineShape = Record<StageKey, { count: number; value: number }>;
 type TerminalStageKey = "CLOSED" | "LOST";
 type TerminalOutcomesShape = Record<TerminalStageKey, { count: number; value: number }>;
+type ManagerBreakdownRow = {
+  managerId: string;
+  managerName: string;
+  stages: PipelineShape;
+  totalValue: number;
+  outcomes: TerminalOutcomesShape;
+};
+
+const UNASSIGNED_ROW_ID = "UNASSIGNED";
+const UNASSIGNED_ROW_NAME = "Unassigned";
 
 function emptyPipeline() {
   const pipeline: PipelineShape = {
@@ -50,33 +62,72 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const includeRepBreakdown = url.searchParams.get("includeRepBreakdown") === "1";
   const includeOutcomes = url.searchParams.get("includeOutcomes") === "1";
+  const product = url.searchParams.get("product");
+  if (product && !PRODUCT_OPTIONS.includes(product)) {
+    return NextResponse.json({ error: "invalid product" }, { status: 400 });
+  }
 
   let managerReports: Array<{ id: string; name: string; email: string }> = [];
-  const where = await buildDealWhere(user);
+  let managers: Array<{ id: string; name: string }> = [];
+  let adminReports: Array<{ id: string; managerId: string | null }> = [];
+  const where = {
+    ...(await buildDealWhere(user)),
+    status: DealStatus.ACTIVE,
+    ...(product ? { name: product } : {}),
+  };
   if (user.role === UserRole.MANAGER) {
     managerReports = await prisma.user.findMany({
       where: { managerId: user.id, role: UserRole.REP },
       select: { id: true, name: true, email: true },
     });
+  } else if (user.role === UserRole.ADMIN) {
+    [managers, adminReports] = await Promise.all([
+      prisma.user.findMany({
+        where: { role: UserRole.MANAGER },
+        select: { id: true, name: true },
+      }),
+      prisma.user.findMany({
+        where: { role: UserRole.REP },
+        select: { id: true, managerId: true },
+      }),
+    ]);
   }
 
   const deals = await prisma.deal.findMany({
     where,
-    select: { id: true, value: true, account: { select: { assignedToId: true } } },
+    select: {
+      id: true,
+      value: true,
+      lastActivityAt: true,
+      status: true,
+      account: { select: { assignedToId: true } },
+    },
   });
+  const activeDeals = getActiveDeals(await enforceExpiry(deals));
+  const logs = activeDeals.length
+    ? await prisma.interactionLog.findMany({
+        where: { dealId: { in: activeDeals.map((deal) => deal.id) } },
+        select: { dealId: true, outcome: true },
+      })
+    : [];
+  const logsByDealId = new Map<string, Array<{ outcome: typeof logs[number]["outcome"] }>>();
+  for (const log of logs) {
+    const arr = logsByDealId.get(log.dealId) ?? [];
+    arr.push({ outcome: log.outcome });
+    logsByDealId.set(log.dealId, arr);
+  }
 
   const pipeline = emptyPipeline();
   const outcomes = emptyTerminalOutcomes();
-  const personalPipeline = emptyPipeline();
-  const personalOutcomes = emptyTerminalOutcomes();
-  const dealStages = await Promise.all(
-    deals.map(async (deal) => ({
-      deal,
-      stage: await getDealStage(deal.id),
-    })),
-  );
+  const includePersonalPipeline = user.role === UserRole.MANAGER;
+  const personalPipeline = includePersonalPipeline ? emptyPipeline() : null;
+  const personalOutcomes = includePersonalPipeline ? emptyTerminalOutcomes() : null;
+  const dealStages = activeDeals.map((deal) => ({
+    deal,
+    stage: getDealStageFromLogs(logsByDealId.get(deal.id) ?? []),
+  }));
   dealStages.forEach(({ deal, stage }) => {
-    if (deal.account.assignedToId === user.id) {
+    if (personalPipeline && personalOutcomes && deal.account.assignedToId === user.id) {
       if (isPipelineStage(stage)) {
         accumulatePipeline(personalPipeline, stage, deal.value);
       } else if (isTerminalStage(stage)) {
@@ -93,16 +144,65 @@ export async function GET(request: Request) {
     outcomes[stage].value += deal.value;
   });
 
+  let managerBreakdown: ManagerBreakdownRow[] | undefined;
+  if (user.role === UserRole.ADMIN) {
+    const assigneeManagerById = new Map<string, string>();
+    for (const manager of managers) assigneeManagerById.set(manager.id, manager.id);
+    for (const report of adminReports) {
+      if (report.managerId) assigneeManagerById.set(report.id, report.managerId);
+    }
+    const rowsByManager = new Map<string, ManagerBreakdownRow>();
+    for (const manager of managers) {
+      rowsByManager.set(manager.id, {
+        managerId: manager.id,
+        managerName: manager.name,
+        stages: emptyPipeline(),
+        totalValue: 0,
+        outcomes: emptyTerminalOutcomes(),
+      });
+    }
+    rowsByManager.set(UNASSIGNED_ROW_ID, {
+      managerId: UNASSIGNED_ROW_ID,
+      managerName: UNASSIGNED_ROW_NAME,
+      stages: emptyPipeline(),
+      totalValue: 0,
+      outcomes: emptyTerminalOutcomes(),
+    });
+    for (const { deal, stage } of dealStages) {
+      const assignedToId = deal.account.assignedToId;
+      const managerId = assignedToId ? assigneeManagerById.get(assignedToId) : undefined;
+      const row = rowsByManager.get(managerId ?? UNASSIGNED_ROW_ID);
+      if (!row) continue;
+      if (isPipelineStage(stage)) {
+        accumulatePipeline(row.stages, stage, deal.value);
+        row.totalValue += deal.value;
+      } else if (isTerminalStage(stage)) {
+        row.outcomes[stage].count += 1;
+        row.outcomes[stage].value += deal.value;
+      }
+    }
+    managerBreakdown = Array.from(rowsByManager.values());
+  }
+
   if (!(includeRepBreakdown && user.role === UserRole.MANAGER)) {
     if (includeOutcomes) {
       return NextResponse.json({
+        pipeline,
         totals: pipeline,
         outcomes,
-        personalPipeline: {
-          pipeline: personalPipeline,
-          outcomes: personalOutcomes,
-        },
+        ...(managerBreakdown ? { managerBreakdown } : {}),
+        ...(personalPipeline && personalOutcomes
+          ? {
+              personalPipeline: {
+                pipeline: personalPipeline,
+                outcomes: personalOutcomes,
+              },
+            }
+          : {}),
       });
+    }
+    if (managerBreakdown) {
+      return NextResponse.json({ pipeline, outcomes, managerBreakdown });
     }
     return NextResponse.json(pipeline);
   }
@@ -144,10 +244,14 @@ export async function GET(request: Request) {
     totals: pipeline,
     outcomes,
     repPipelines,
-    personalPipeline: {
-      pipeline: personalPipeline,
-      outcomes: personalOutcomes,
-    },
+    ...(personalPipeline && personalOutcomes
+      ? {
+          personalPipeline: {
+            pipeline: personalPipeline,
+            outcomes: personalOutcomes,
+          },
+        }
+      : {}),
   });
 }
 

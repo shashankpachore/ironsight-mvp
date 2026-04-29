@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { ManagerTodayView } from "@/components/today/ManagerTodayView";
 import { useTestSession } from "@/components/test-session-bar";
+import { useTodayRep } from "@/hooks/useTodayRep";
 
 type TodayItem = {
   dealId: string;
@@ -44,38 +44,16 @@ type ManagerPayload = {
 
 type ApiPayload = TodayPayload | ManagerPayload;
 
-function RepTodayPage({ header }: { header: HeadersInit | undefined }) {
-  const [data, setData] = useState<ApiPayload>({
+function RepTodayPage() {
+  const todayQuery = useTodayRep<ApiPayload>();
+  const data = todayQuery.data ?? ({
     mode: "REP",
     critical: [],
     attention: [],
     upcoming: [],
   } as TodayPayload);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    async function loadToday() {
-      setLoading(true);
-      setError("");
-      const res = await fetch("/api/today", { headers: header });
-      if (!mounted) return;
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        setError(body?.error ?? "Failed to load today's actions.");
-        setLoading(false);
-        return;
-      }
-      const payload = (await res.json()) as ApiPayload;
-      setData(payload);
-      setLoading(false);
-    }
-    void loadToday();
-    return () => {
-      mounted = false;
-    };
-  }, [header]);
+  const loading = todayQuery.isLoading;
+  const error = todayQuery.error;
 
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
@@ -85,7 +63,7 @@ function RepTodayPage({ header }: { header: HeadersInit | undefined }) {
       </p>
 
       {loading ? <p>Loading today&apos;s actions...</p> : null}
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-red-600">Failed to load today&apos;s actions.</p> : null}
 
       {!loading && !error && data.mode === "REP" ? (
         <section className="border rounded-lg p-4 space-y-3">
@@ -136,5 +114,5 @@ export default function TodayPage() {
     return <ManagerTodayPage header={header} currentUser={currentUser} />;
   }
 
-  return <RepTodayPage header={header} />;
+  return <RepTodayPage />;
 }

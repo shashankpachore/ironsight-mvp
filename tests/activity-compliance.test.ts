@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GET as complianceGET } from "../app/api/activity/compliance/route";
 import { getComplianceWindows } from "../lib/ist-time";
 import { getActivityComplianceRows } from "../lib/activity-compliance";
-import { prisma } from "../lib/prisma";
+import { prismaTest as prisma } from "../lib/test-prisma";
 import { createDeal, json, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 
 async function seedApprovedAccount(params: { adminId: string; assigneeId: string }) {
