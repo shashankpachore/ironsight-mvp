@@ -130,6 +130,7 @@ const scenarios: Scenario[] = [
 
 async function resetAdversarialDb() {
   await prisma.interactionRisk.deleteMany();
+  await prisma.interactionLogParticipant.deleteMany();
   await prisma.interactionLog.deleteMany();
   await prisma.deal.deleteMany();
   await prisma.account.deleteMany();

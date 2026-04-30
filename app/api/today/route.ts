@@ -11,6 +11,8 @@ import { scoreDeal } from "@/lib/ranking";
 type TodayItem = {
   dealId: string;
   accountName: string;
+  owner: { id: string; name: string } | null;
+  coOwner: { id: string; name: string } | null;
   nextStepType: string | null;
   nextStepDate: string;
   lastActivityAt: string;
@@ -110,6 +112,8 @@ function toTodayItem(item: TodayItem & { assigneeId: string | null }): TodayItem
   return {
     dealId: item.dealId,
     accountName: item.accountName,
+    owner: item.owner,
+    coOwner: item.coOwner,
     nextStepType: item.nextStepType,
     nextStepDate: item.nextStepDate,
     lastActivityAt: item.lastActivityAt,
@@ -178,6 +182,8 @@ export async function GET(request: Request) {
         status: true,
         nextStepType: true,
         nextStepDate: true,
+        owner: { select: { id: true, name: true } },
+        coOwner: { select: { id: true, name: true } },
         account: { select: { name: true, assignedToId: true } },
       },
     });
@@ -244,6 +250,8 @@ export async function GET(request: Request) {
           dealId: deal.id,
           assigneeId: deal.account.assignedToId,
           accountName: deal.account.name,
+          owner: deal.owner,
+          coOwner: deal.coOwner,
           nextStepType: deal.nextStepType,
           nextStepDate: deal.nextStepDate!.toISOString(),
           lastActivityAt: latestLog.toISOString(),

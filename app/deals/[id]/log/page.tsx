@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { FormEvent, use, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, use, useEffect, useMemo, useState } from "react";
 import { useDeal } from "@/hooks/useDeal";
 import { useInteractionLogs } from "@/hooks/useInteractionLogs";
 import { apiPost } from "@/lib/api";
@@ -30,6 +30,13 @@ import {
   RISK_SUGGESTIONS,
 } from "@/lib/suggestions";
 
+type UserOption = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+};
+
 export default function LogInteractionPage({
   params,
 }: {
@@ -53,6 +60,12 @@ export default function LogInteractionPage({
   const [stakeholderType, setStakeholderType] = useState<
     (typeof STAKEHOLDER_TYPES)[number]
   >(STAKEHOLDER_TYPES[0]);
+  const [users, setUsers] = useState<UserOption[]>([]);
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [participantQuery, setParticipantQuery] = useState("");
+  const [participantDropdownOpen, setParticipantDropdownOpen] = useState(false);
+  const [activeParticipantIndex, setActiveParticipantIndex] = useState(0);
+  const [participantsInitialized, setParticipantsInitialized] = useState(false);
   const [risks, setRisks] = useState<RiskCategoryValue[]>([]);
   const [risksManuallyChanged, setRisksManuallyChanged] = useState(false);
   const [notes, setNotes] = useState("");
@@ -91,12 +104,21 @@ export default function LogInteractionPage({
     if (!canSubmit) {
       const needsNextStep = requiresNextStep && !hasRequiredNextStep;
       const needsRisk = requiresRisks && !hasRequiredRisks;
-      if (needsNextStep && needsRisk) {
+      const needsParticipant = !hasParticipants;
+      if (needsNextStep && needsRisk && needsParticipant) {
+        setError("Please complete required next step fields, select at least one risk, and add a participant.");
+      } else if (needsNextStep && needsRisk) {
         setError("Please complete required next step fields and select at least one risk.");
+      } else if (needsNextStep && needsParticipant) {
+        setError("Please complete required next step fields and add a participant.");
+      } else if (needsRisk && needsParticipant) {
+        setError("Please select at least one risk and add a participant.");
       } else if (needsNextStep) {
         setError("Please complete required next step fields.");
       } else if (needsRisk) {
         setError("Please select at least one risk.");
+      } else if (needsParticipant) {
+        setError("Please add at least one participant.");
       } else {
         setError("Please complete required fields.");
       }
@@ -110,6 +132,7 @@ export default function LogInteractionPage({
       outcome,
       stakeholderType,
       risks,
+      participants,
       notes: notes || undefined,
       nextStepSource: nextStepManuallyChanged ? "MANUAL" : "AUTO",
     };
@@ -143,6 +166,47 @@ export default function LogInteractionPage({
     });
   }
 
+  function addParticipant(userId: string) {
+    setParticipants((prev) => {
+      if (prev.includes(userId)) return prev;
+      return [...prev, userId];
+    });
+    setParticipantQuery("");
+    setActiveParticipantIndex(0);
+    setParticipantDropdownOpen(false);
+  }
+
+  function removeParticipant(userId: string) {
+    setParticipants((prev) => prev.filter((id) => id !== userId));
+  }
+
+  function onParticipantKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Backspace" && participantQuery === "" && participants.length > 0) {
+      event.preventDefault();
+      setParticipants((prev) => prev.slice(0, -1));
+      return;
+    }
+    if (filteredParticipantOptions.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setParticipantDropdownOpen(true);
+      setActiveParticipantIndex((prev) => (prev + 1) % filteredParticipantOptions.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setParticipantDropdownOpen(true);
+      setActiveParticipantIndex((prev) =>
+        prev === 0 ? filteredParticipantOptions.length - 1 : prev - 1,
+      );
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addParticipant(filteredParticipantOptions[activeParticipantIndex]?.id ?? filteredParticipantOptions[0].id);
+    }
+  }
+
   const requiresNextStep = outcome !== "PO_RECEIVED";
   const activeStage = postLogStage;
   const allowedRisksForStage = activeStage ? STAGE_RISK_MAP[activeStage] : null;
@@ -164,7 +228,34 @@ export default function LogInteractionPage({
     : true;
   const hasRequiredRisks = requiresRisks ? risks.length >= 1 : true;
   const hasDisallowedRisks = risksNotAllowed ? risks.length > 0 : false;
-  const canSubmit = hasRequiredRisks && hasRequiredNextStep && !saving;
+  const hasParticipants = participants.length > 0;
+  const canSubmit = hasRequiredRisks && hasRequiredNextStep && hasParticipants && !saving;
+  const participantQueryLower = participantQuery.trim().toLowerCase();
+  const selectedParticipantUsers = participants.map((participantId) => {
+    const user = users.find((candidate) => candidate.id === participantId);
+    if (user) return user;
+    if (deal?.owner?.id === participantId) return deal.owner;
+    if (deal?.coOwner?.id === participantId) {
+      return {
+        id: deal.coOwner.id,
+        name: deal.coOwner.name,
+        email: "",
+        role: "CO_OWNER",
+      };
+    }
+    return {
+      id: participantId,
+      name: "Unknown user",
+      email: "",
+      role: "",
+    };
+  });
+  const filteredParticipantOptions = participantQueryLower
+    ? users
+        .filter((user) => !participants.includes(user.id))
+        .filter((user) => user.name.toLowerCase().includes(participantQueryLower))
+        .slice(0, 10)
+    : [];
 
   useEffect(() => {
     if (!allowedRisksForStage) return;
@@ -172,6 +263,34 @@ export default function LogInteractionPage({
       setRisks((prev) => prev.filter((risk) => allowedRiskSet.has(risk)));
     });
   }, [allowedRiskSet, allowedRisksForStage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUsers() {
+      try {
+        const res = await fetch("/api/session/users");
+        if (!res.ok) return;
+        const data = (await res.json()) as UserOption[];
+        if (!cancelled) setUsers(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setUsers([]);
+      }
+    }
+    void loadUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!deal?.ownerId || participantsInitialized) return;
+    setParticipants(Array.from(new Set([deal.ownerId, deal.coOwnerId].filter(Boolean) as string[])));
+    setParticipantsInitialized(true);
+  }, [deal?.coOwnerId, deal?.ownerId, participantsInitialized]);
+
+  useEffect(() => {
+    setActiveParticipantIndex(0);
+  }, [participantQuery]);
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -268,6 +387,77 @@ export default function LogInteractionPage({
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <p className="block text-sm mb-1">Participants</p>
+          <div className="relative rounded border bg-white px-2 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedParticipantUsers.map((participant) => (
+                <span
+                  key={participant.id}
+                  className="inline-flex items-center gap-1 rounded-full border bg-gray-50 px-2 py-1 text-xs"
+                >
+                  {participant.name}
+                  {participant.role ? <span className="text-gray-500">({participant.role})</span> : null}
+                  <button
+                    type="button"
+                    className="text-gray-500 hover:text-black"
+                    aria-label={`Remove ${participant.name}`}
+                    onClick={() => removeParticipant(participant.id)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                className="min-w-40 flex-1 border-0 p-1 text-sm outline-none"
+                placeholder={participants.length ? "Search users" : "Search participants by name"}
+                value={participantQuery}
+                onChange={(event) => {
+                  setParticipantQuery(event.target.value);
+                  setParticipantDropdownOpen(true);
+                }}
+                onFocus={() => setParticipantDropdownOpen(true)}
+                onBlur={() => {
+                  window.setTimeout(() => setParticipantDropdownOpen(false), 120);
+                }}
+                onKeyDown={onParticipantKeyDown}
+                role="combobox"
+                aria-expanded={participantDropdownOpen}
+                aria-controls="participant-options"
+              />
+            </div>
+            {participantDropdownOpen ? (
+              <div
+                id="participant-options"
+                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded border bg-white shadow"
+              >
+                {participantQuery.trim() === "" ? (
+                  <p className="px-3 py-2 text-sm text-gray-500">Type a name to search users.</p>
+                ) : filteredParticipantOptions.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-gray-500">No matching users.</p>
+                ) : (
+                  filteredParticipantOptions.map((user, index) => (
+                    <button
+                      key={user.id}
+                      type="button"
+                      className={`block w-full px-3 py-2 text-left text-sm ${
+                        index === activeParticipantIndex ? "bg-gray-100" : "hover:bg-gray-50"
+                      }`}
+                      onMouseEnter={() => setActiveParticipantIndex(index)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => addParticipant(user.id)}
+                    >
+                      <span className="font-medium">{user.name}</span>{" "}
+                      <span className="text-xs text-gray-500">({user.role})</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-gray-500">Owner is included by default. Search to add reps or managers.</p>
         </div>
         <div>
           {risksNotAllowed ? (

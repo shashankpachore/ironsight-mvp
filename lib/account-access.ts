@@ -19,11 +19,17 @@ export function validateDealCreationAccess(params: {
 export function validateInteractionLogAccess(params: {
   accountAssignedToId: string | null;
   currentUserId: string;
+  ownerId?: string | null;
+  coOwnerId?: string | null;
 }) {
   if (!params.accountAssignedToId) {
     return "account must be assigned before logging interactions";
   }
-  if (params.accountAssignedToId !== params.currentUserId) {
+  if (
+    params.accountAssignedToId !== params.currentUserId &&
+    params.ownerId !== params.currentUserId &&
+    params.coOwnerId !== params.currentUserId
+  ) {
     return "only assigned user can log interactions";
   }
   return null;

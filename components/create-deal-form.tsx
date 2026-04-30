@@ -11,18 +11,26 @@ type SearchAccount = {
   name: string;
 };
 
+type UserOption = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+};
+
 export function CreateDealForm() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { header } = useTestSession();
+  const { currentUser, header } = useTestSession();
   const headerRef = useRef(header);
 
-  const [form, setForm] = useState({ name: PRODUCT_OPTIONS[0], accountId: "", value: "" });
+  const [form, setForm] = useState({ name: PRODUCT_OPTIONS[0], accountId: "", value: "", coOwnerId: "" });
   const [accountQuery, setAccountQuery] = useState("");
   const [accountResults, setAccountResults] = useState<SearchAccount[]>([]);
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [accountSearchCompleted, setAccountSearchCompleted] = useState(false);
+  const [users, setUsers] = useState<UserOption[]>([]);
   const [error, setError] = useState("");
 
   const accountPickerRef = useRef<HTMLDivElement>(null);
@@ -40,6 +48,24 @@ export function CreateDealForm() {
   useEffect(() => {
     headerRef.current = header;
   }, [header]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUsers() {
+      try {
+        const res = await fetch("/api/session/users", { headers: headerRef.current });
+        if (!res.ok) return;
+        const data = (await res.json()) as UserOption[];
+        if (!cancelled) setUsers(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setUsers([]);
+      }
+    }
+    void loadUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const trimmed = accountQuery.trim();
@@ -113,6 +139,7 @@ export function CreateDealForm() {
         name: form.name,
         accountId: form.accountId,
         value: Number(form.value),
+        coOwnerId: form.coOwnerId || undefined,
       }),
     });
 
@@ -122,7 +149,7 @@ export function CreateDealForm() {
       return;
     }
 
-    setForm({ name: PRODUCT_OPTIONS[0], accountId: "", value: "" });
+    setForm({ name: PRODUCT_OPTIONS[0], accountId: "", value: "", coOwnerId: "" });
     setAccountQuery("");
     setAccountResults([]);
     setAccountDropdownOpen(false);
@@ -134,9 +161,17 @@ export function CreateDealForm() {
     router.refresh();
   }
 
+  const coOwnerOptions = users.filter((user) => {
+    if (user.id === currentUser?.id) return false;
+    if (currentUser?.role === "MANAGER") {
+      return user.role === "REP" || user.role === "MANAGER";
+    }
+    return user.role === "REP";
+  });
+
   return (
     <>
-      <form onSubmit={createDeal} className="grid gap-3 md:grid-cols-4">
+      <form onSubmit={createDeal} className="grid gap-3 md:grid-cols-5">
         <select
           className="border rounded px-3 py-2"
           value={form.name}
@@ -205,6 +240,19 @@ export function CreateDealForm() {
           onChange={(e) => setForm((s) => ({ ...s, value: e.target.value }))}
           required
         />
+        <select
+          className="border rounded px-3 py-2"
+          value={form.coOwnerId}
+          onChange={(e) => setForm((s) => ({ ...s, coOwnerId: e.target.value }))}
+          aria-label="Co-owner (execution support)"
+        >
+          <option value="">No co-owner</option>
+          {coOwnerOptions.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.name} ({user.role})
+            </option>
+          ))}
+        </select>
         <button className="bg-black text-white rounded px-4 py-2">Create</button>
       </form>
       {error ? <p className="text-sm text-red-600 mt-2">{error}</p> : null}

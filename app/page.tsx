@@ -16,6 +16,10 @@ type DealItem = {
     id: string;
     name: string;
   } | null;
+  coOwner?: {
+    id: string;
+    name: string;
+  } | null;
   account: {
     name: string;
     assignedTo?: {

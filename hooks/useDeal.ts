@@ -3,6 +3,18 @@ import { apiGet } from "@/lib/api";
 
 export type DealDetail = {
   id: string;
+  ownerId: string;
+  coOwnerId?: string | null;
+  owner?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+  coOwner?: {
+    id: string;
+    name: string;
+  } | null;
   expiryWarning?: "EXPIRED" | "EXPIRING_SOON" | null;
   daysToExpiry?: number | null;
 };

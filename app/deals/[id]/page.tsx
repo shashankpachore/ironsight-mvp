@@ -25,9 +25,15 @@ export default async function DealDetailPage({
     where: { id },
     include: {
       account: true,
-      owner: { select: { id: true, managerId: true } },
+      owner: { select: { id: true, name: true, managerId: true } },
+      coOwner: { select: { id: true, name: true } },
       logs: {
-        include: { risks: true },
+        include: {
+          risks: true,
+          participants: {
+            include: { user: { select: { id: true, name: true } } },
+          },
+        },
         orderBy: { createdAt: "desc" },
       },
     },
@@ -60,6 +66,10 @@ export default async function DealDetailPage({
       <section className="border rounded-lg p-4 space-y-2">
         <h1 className="text-2xl font-semibold">{deal.account.name}</h1>
         <p className="text-sm text-gray-700">Product: {deal.name}</p>
+        <p className="text-sm text-gray-700">Owner (primary, accountable): {deal.owner.name}</p>
+        {deal.coOwner ? (
+          <p className="text-sm text-gray-700">Co-owner (execution support): {deal.coOwner.name}</p>
+        ) : null}
 
         <div className="border rounded p-3">
           <p className="text-sm font-medium">Next Action</p>
@@ -99,6 +109,12 @@ export default async function DealDetailPage({
                 <p className="text-sm">Type: {log.interactionType}</p>
                 <p className="text-sm">Outcome: {log.outcome}</p>
                 <p className="text-sm">Stakeholder: {log.stakeholderType}</p>
+                <p className="text-sm">
+                  Participants:{" "}
+                  {log.participants.length
+                    ? log.participants.map((participant) => participant.user.name).join(", ")
+                    : "None"}
+                </p>
                 <p className="text-sm">
                   Risks: {log.risks.map((r) => r.category).join(", ")}
                 </p>

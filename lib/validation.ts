@@ -25,6 +25,13 @@ export function validateDealInput(input: unknown) {
   if (typeof body.value !== "number" || body.value <= 0) {
     return "value must be > 0";
   }
+  if (
+    body.coOwnerId !== undefined &&
+    body.coOwnerId !== null &&
+    (typeof body.coOwnerId !== "string" || !body.coOwnerId.trim())
+  ) {
+    return "coOwnerId must be a string";
+  }
   return null;
 }
 
@@ -49,6 +56,17 @@ export function validateLogInput(input: unknown) {
   }
   if (body.notes !== undefined && typeof body.notes !== "string") {
     return "notes must be a string";
+  }
+  if (body.participants !== undefined) {
+    if (!Array.isArray(body.participants)) {
+      return "participants must be an array";
+    }
+    if (!body.participants.every((participant) => typeof participant === "string" && participant.trim())) {
+      return "participants must contain user ids";
+    }
+    if (new Set(body.participants).size !== body.participants.length) {
+      return "participants must be unique";
+    }
   }
   if (!isPoReceived) {
     if (!isValidNextStepType(body.nextStepType)) {

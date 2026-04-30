@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { normalizeCompanyName } from "@/lib/accounts";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
-import { isValidIndiaState } from "@/lib/india-states";
+import { validateStateDistrict } from "@/lib/geo/india-states-districts";
 import { prisma } from "@/lib/prisma";
 
 function parseAccountType(raw: unknown): AccountType | null {
@@ -40,13 +40,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "state is required" }, { status: 400 });
   }
 
-  const state = body.state.trim();
-  if (!isValidIndiaState(state)) {
-    return NextResponse.json({ error: "state must be a valid Indian state or UT" }, { status: 400 });
+  const geo = validateStateDistrict(body.state, body.district);
+  if (!geo.ok) {
+    return NextResponse.json({ error: geo.error }, { status: 400 });
   }
 
   const name = body.name.trim();
-  const district = body.district.trim();
   const normalized = normalizeCompanyName(name);
   const existing = await prisma.account.findUnique({ where: { normalized } });
   if (existing) {
@@ -61,8 +60,8 @@ export async function POST(request: Request) {
       name,
       normalized,
       type,
-      state,
-      district,
+      state: geo.state,
+      district: geo.district,
       status: AccountStatus.PENDING,
       createdById: user.id,
       requestedById: user.id,

@@ -54,7 +54,15 @@ export async function buildDealWhere(user: AccessUser): Promise<Prisma.DealWhere
   assertValidAccessUser(user);
   const ids = await getAccessibleUserIds(user);
   if (!ids) return {};
-  return { account: { assignedToId: { in: ids } } };
+  return {
+    OR: [
+      { account: { assignedToId: { in: ids } } },
+      { ownerId: { in: ids } },
+      { coOwnerId: { in: ids } },
+      { ownerId: user.id },
+      { coOwnerId: user.id },
+    ],
+  };
 }
 
 export async function canAccessAssignedToId(

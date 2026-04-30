@@ -14,6 +14,7 @@ async function createAssignedDealForUser(params: {
   ownerId: string;
   adminId: string;
   label: string;
+  coOwnerId?: string | null;
 }) {
   const account = await json<{ id: string }>(
     await createAccount({ byUserId: params.adminId, name: uniqueName(`Today-${params.label}`) }),
@@ -29,6 +30,7 @@ async function createAssignedDealForUser(params: {
     accountId: account.id,
     name: uniqueName(`Deal-${params.label}`),
     value: 1000,
+    coOwnerId: params.coOwnerId,
   });
   return json<{ id: string }>(dealRes);
 }
@@ -130,6 +132,70 @@ describe("today api", () => {
     ]);
     expect(allIds.has(noNextStep)).toBe(false);
     expect(allIds.has(closedDeal)).toBe(false);
+  });
+
+  it("shows a co-owned deal once in the co-owner Today view", async () => {
+    const coOwned = (await createAssignedDealForUser({
+      ownerId: users.rep.id,
+      adminId: users.admin.id,
+      label: "CoOwnerToday",
+      coOwnerId: users.rep2.id,
+    })).id;
+    await prisma.deal.update({
+      where: { id: coOwned },
+      data: { nextStepDate: dayOffset(0), lastActivityAt: dayOffset(-1), nextStepType: "FOLLOW_UP" },
+    });
+
+    const res = await getTodayRoute(makeRequest("http://localhost/api/today", { userId: users.rep2.id }));
+    expect(res.status).toBe(200);
+    const body = await json<{
+      mode: "REP";
+      critical: Array<{ dealId: string }>;
+      attention: Array<{ dealId: string }>;
+      upcoming: Array<{ dealId: string }>;
+    }>(res);
+    const visibleIds = [
+      ...body.critical.map((deal) => deal.dealId),
+      ...body.attention.map((deal) => deal.dealId),
+      ...body.upcoming.map((deal) => deal.dealId),
+    ];
+    expect(visibleIds.filter((dealId) => dealId === coOwned)).toHaveLength(1);
+  });
+
+  it("does not show participant-only deals in Today", async () => {
+    const participantOnly = (await createAssignedDealForUser({
+      ownerId: users.rep.id,
+      adminId: users.admin.id,
+      label: "ParticipantOnlyToday",
+    })).id;
+    await prisma.deal.update({
+      where: { id: participantOnly },
+      data: { nextStepDate: dayOffset(0), lastActivityAt: dayOffset(-1), nextStepType: "FOLLOW_UP" },
+    });
+    await prisma.interactionLog.create({
+      data: {
+        dealId: participantOnly,
+        interactionType: "CALL",
+        outcome: Outcome.NO_RESPONSE,
+        stakeholderType: "UNKNOWN",
+        participants: { create: [{ userId: users.rep2.id }] },
+      },
+    });
+
+    const res = await getTodayRoute(makeRequest("http://localhost/api/today", { userId: users.rep2.id }));
+    expect(res.status).toBe(200);
+    const body = await json<{
+      mode: "REP";
+      critical: Array<{ dealId: string }>;
+      attention: Array<{ dealId: string }>;
+      upcoming: Array<{ dealId: string }>;
+    }>(res);
+    const visible = new Set([
+      ...body.critical.map((deal) => deal.dealId),
+      ...body.attention.map((deal) => deal.dealId),
+      ...body.upcoming.map((deal) => deal.dealId),
+    ]);
+    expect(visible.has(participantOnly)).toBe(false);
   });
 
   it("manager gets prioritized rep summary with stale/critical flags and drill-down", async () => {

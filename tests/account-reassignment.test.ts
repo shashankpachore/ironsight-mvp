@@ -49,6 +49,31 @@ describe("account reassignment effects", () => {
     expect(deal?.terminalOwnerId).toBeNull();
   });
 
+  it("reassignment clears manager co-owner when active deal becomes rep-owned", async () => {
+    const managerAccount = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("ManagerOwnedReassign") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: managerAccount.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: managerAccount.id, assigneeId: users.manager.id });
+    const managerDeal = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.manager.id,
+        accountId: managerAccount.id,
+        value: 100,
+        name: PRODUCT_OPTIONS[0],
+        coOwnerId: users.manager2.id,
+      }),
+    );
+
+    await assignAccount({ byUserId: users.admin.id, accountId: managerAccount.id, assigneeId: users.rep.id });
+    const deal = await prisma.deal.findUnique({
+      where: { id: managerDeal.id },
+      select: { ownerId: true, coOwnerId: true },
+    });
+    expect(deal?.ownerId).toBe(users.rep.id);
+    expect(deal?.coOwnerId).toBeNull();
+  });
+
   it("reassignment does not change terminal deal ownerId", async () => {
     await logInteraction({
       byUserId: users.rep.id,

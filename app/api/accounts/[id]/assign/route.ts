@@ -67,6 +67,19 @@ export async function POST(
       return { updated: updatedAccount, syncedDealCount: 0 };
     }
 
+    await tx.deal.updateMany({
+      where: {
+        id: { in: activeDealIds },
+        OR: [
+          { coOwnerId: body.userId },
+          ...(assignedUser.role === UserRole.MANAGER
+            ? []
+            : [{ coOwner: { role: { not: UserRole.REP } } }]),
+        ],
+      },
+      data: { coOwnerId: null },
+    });
+
     const syncResult = await tx.deal.updateMany({
       where: { id: { in: activeDealIds } },
       data: { ownerId: body.userId },

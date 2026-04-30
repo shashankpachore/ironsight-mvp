@@ -23,6 +23,8 @@ export async function POST(request: Request) {
     const accessError = validateInteractionLogAccess({
       accountAssignedToId: deal.account.assignedToId,
       currentUserId: user.id,
+      ownerId: deal.ownerId,
+      coOwnerId: deal.coOwnerId,
     });
     if (accessError) {
       const status = accessError === "only assigned user can log interactions" ? 403 : 400;
@@ -94,6 +96,17 @@ export async function POST(request: Request) {
       return Response.json({ error: "DEAL_DROPPED outcome must result in LOST stage" }, { status: 400 });
     }
 
+    const participantIds = (bodyRecord.participants as string[] | undefined) ?? [];
+    if (participantIds.length > 0) {
+      const participants = await prisma.user.findMany({
+        where: { id: { in: participantIds } },
+        select: { id: true },
+      });
+      if (participants.length !== participantIds.length) {
+        return Response.json({ error: "participants must reference existing users" }, { status: 400 });
+      }
+    }
+
     const shouldStampClosed = postLogStage === "CLOSED" && !deal.terminalStage;
     const shouldStampLost = postLogStage === "LOST" && !deal.terminalStage;
 
@@ -108,8 +121,11 @@ export async function POST(request: Request) {
           risks: {
             create: riskValues.map((risk) => ({ category: risk })),
           },
+          participants: {
+            create: participantIds.map((participantId) => ({ userId: participantId })),
+          },
         },
-        include: { risks: true },
+        include: { risks: true, participants: true },
       });
 
       await tx.deal.update({

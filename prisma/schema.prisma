@@ -19,7 +19,10 @@ model User {
   requestedAccounts Account[]  @relation("AccountRequestedBy")
   auditLogsChanged  AuditLog[] @relation("ChangedByUser")
   deals             Deal[]
+  coOwnedDeals      Deal[]     @relation("DealCoOwner")
   terminalOwnedDeals Deal[]    @relation("TerminalDealOwner")
+  interactionLogParticipants InteractionLogParticipant[]
+  pipelineSnapshots PipelineSnapshot[]
   manager           User?      @relation("ManagerReports", fields: [managerId], references: [id])
   reports           User[]     @relation("ManagerReports")
 
@@ -53,6 +56,7 @@ model Deal {
   value          Float
   accountId      String
   ownerId        String
+  coOwnerId      String?
   status         DealStatus       @default(ACTIVE)
   terminalOwnerId String?
   terminalStage   DealTerminalStage?
@@ -63,12 +67,14 @@ model Deal {
   nextStepType   String?
   account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
   owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  coOwner        User?            @relation("DealCoOwner", fields: [coOwnerId], references: [id], onDelete: SetNull)
   terminalOwner  User?            @relation("TerminalDealOwner", fields: [terminalOwnerId], references: [id], onDelete: SetNull)
   logs           InteractionLog[]
 
   @@index([status, createdAt])
   @@index([status, lastActivityAt])
   @@index([ownerId])
+  @@index([coOwnerId])
 }
 
 model InteractionLog {
@@ -81,8 +87,20 @@ model InteractionLog {
   createdAt       DateTime          @default(now())
   deal            Deal              @relation(fields: [dealId], references: [id], onDelete: Cascade)
   risks           InteractionRisk[]
+  participants    InteractionLogParticipant[]
 
   @@index([dealId, createdAt])
+}
+
+model InteractionLogParticipant {
+  logId  String
+  userId String
+
+  log  InteractionLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([logId, userId])
+  @@index([userId, logId])
 }
 
 model InteractionRisk {
@@ -102,6 +120,20 @@ model AuditLog {
   after       Json?
   createdAt   DateTime        @default(now())
   changedBy   User            @relation("ChangedByUser", fields: [changedById], references: [id], onDelete: Cascade)
+}
+
+model PipelineSnapshot {
+  id         String   @id @default(cuid())
+  month      String
+  ownerId    String
+  stage      String
+  totalValue Float
+  dealCount  Int
+  createdAt  DateTime @default(now())
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([month, ownerId])
+  @@unique([month, ownerId, stage])
 }
 
 enum UserRole {

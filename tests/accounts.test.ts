@@ -20,7 +20,7 @@ describe("accounts api - adversarial + permissions", () => {
     expect(res.status).toBe(201);
     expect(body.status).toBe(AccountStatus.PENDING);
     expect(body.state).toBe("Maharashtra");
-    expect(body.district).toBe("Mumbai");
+    expect(body.district).toBe("Mumbai City");
     expect(body.type).toBe("SCHOOL");
   });
 
@@ -49,6 +49,43 @@ describe("accounts api - adversarial + permissions", () => {
       }),
     );
     expect(res.status).toBe(400);
+  });
+
+  it("request stores canonical state and district after case-insensitive matching", async () => {
+    const res = await requestAccountRoute(
+      makeRequest("http://localhost/api/accounts/request", {
+        method: "POST",
+        userId: users.rep.id,
+        body: {
+          type: "SCHOOL",
+          name: uniqueName("CanonicalGeo"),
+          district: " mumbai ",
+          state: "maharashtra",
+        },
+      }),
+    );
+    const body = await json<{ state: string; district: string }>(res);
+    expect(res.status).toBe(201);
+    expect(body.state).toBe("Maharashtra");
+    expect(body.district).toBe("Mumbai City");
+  });
+
+  it("request rejects district that does not belong to selected state", async () => {
+    const res = await requestAccountRoute(
+      makeRequest("http://localhost/api/accounts/request", {
+        method: "POST",
+        userId: users.rep.id,
+        body: {
+          type: "SCHOOL",
+          name: uniqueName("BadDistrict"),
+          district: "Mumbai",
+          state: "Punjab",
+        },
+      }),
+    );
+    const body = await json<{ error: string }>(res);
+    expect(res.status).toBe(400);
+    expect(body.error).toBe("District does not belong to selected state");
   });
 
   it("admin can approve account", async () => {

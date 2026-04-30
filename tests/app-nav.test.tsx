@@ -13,6 +13,11 @@ describe("app nav", () => {
     expect(html).toContain('href="/expired"');
   });
 
+  it("shows Weekly Report tab for all roles", () => {
+    const html = renderToStaticMarkup(<AppNav role="REP" />);
+    expect(html).toContain('href="/weekly-report"');
+  });
+
   it("shows admin links only for manager/admin", () => {
     const repHtml = renderToStaticMarkup(<AppNav role="REP" />);
     const managerHtml = renderToStaticMarkup(<AppNav role="MANAGER" />);

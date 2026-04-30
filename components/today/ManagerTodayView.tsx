@@ -10,6 +10,8 @@ type HeaderLike = HeadersInit | undefined;
 type TodayItem = {
   dealId: string;
   accountName: string;
+  owner: { id: string; name: string } | null;
+  coOwner: { id: string; name: string } | null;
   nextStepType: string | null;
   nextStepDate: string;
   lastActivityAt: string;
@@ -156,6 +158,10 @@ export function ManagerTodayView({
                       className="block border rounded p-3 space-y-1"
                     >
                       <p className="font-medium">{item.accountName}</p>
+                      <p className="text-xs text-gray-600">
+                        Owner: {item.owner?.name ?? "Unknown"}
+                        {item.coOwner ? ` | Co-owner: ${item.coOwner.name}` : ""}
+                      </p>
                       <p className="text-sm">⚠ {item.reason}</p>
                       <p className="text-sm">👉 {item.actionMessage}</p>
                     </Link>

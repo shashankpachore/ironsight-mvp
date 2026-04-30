@@ -23,6 +23,9 @@ export function AppNav({ role }: AppNavProps) {
         <Link href="/pipeline" className="underline">
           Pipeline
         </Link>
+        <Link href="/weekly-report" className="underline">
+          Weekly Report
+        </Link>
         <Link href="/expired" className="underline">
           Expired
         </Link>

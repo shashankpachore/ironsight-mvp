@@ -9,6 +9,31 @@ import { enforceExpiry } from "@/lib/expiry";
 import { getDealMomentum } from "@/lib/momentum";
 import { prisma } from "@/lib/prisma";
 
+type DealOwnerForValidation = {
+  id: string;
+  role: UserRole;
+};
+
+async function validateCoOwnerId(coOwnerId: unknown, owner: DealOwnerForValidation) {
+  if (coOwnerId == null || coOwnerId === "") return null;
+  if (typeof coOwnerId !== "string") return "coOwnerId must be a string";
+  if (coOwnerId === owner.id) return "coOwnerId cannot equal ownerId";
+
+  const coOwner = await prisma.user.findUnique({
+    where: { id: coOwnerId },
+    select: { role: true },
+  });
+  if (!coOwner) return "coOwner not found";
+  if (owner.role === UserRole.MANAGER) {
+    if (coOwner.role !== UserRole.REP && coOwner.role !== UserRole.MANAGER) {
+      return "coOwner must be a REP or MANAGER when owner is MANAGER";
+    }
+    return null;
+  }
+  if (coOwner.role !== UserRole.REP) return "coOwner must be a REP when owner is REP";
+  return null;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -22,20 +47,30 @@ export async function GET(
     where: { id },
     include: {
       account: true,
+      owner: { select: { id: true, name: true, email: true, role: true, managerId: true } },
+      coOwner: { select: { id: true, name: true } },
     },
   });
 
   if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
   const [enforcedDeal] = await enforceExpiry([deal]);
   const canRead = await canAccessAssignedToId(user, deal.account.assignedToId);
-  if (!canRead) {
+  const canReadAsOwner = deal.ownerId === user.id || deal.coOwnerId === user.id;
+  if (!canRead && !canReadAsOwner) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   const logs = includeLogs
     ? await prisma.interactionLog.findMany({
         where: { dealId: id },
-        include: { risks: true },
+        include: {
+          risks: true,
+          participants: {
+            include: {
+              user: { select: { id: true, name: true, email: true, role: true } },
+            },
+          },
+        },
         orderBy: { createdAt: "desc" },
       })
     : await prisma.interactionLog.findMany({
@@ -79,22 +114,48 @@ export async function PATCH(
     throw error;
   }
 
-  const body = (await request.json()) as { value?: unknown };
-  if (body.value === undefined) {
-    return NextResponse.json({ error: "value is required" }, { status: 400 });
+  const body = (await request.json()) as { value?: unknown; coOwnerId?: unknown };
+  const hasValue = body.value !== undefined;
+  const hasCoOwner = Object.prototype.hasOwnProperty.call(body, "coOwnerId");
+  if (!hasValue && !hasCoOwner) {
+    return NextResponse.json({ error: "value or coOwnerId is required" }, { status: 400 });
   }
-  if (typeof body.value !== "number" || !Number.isFinite(body.value) || body.value <= 0) {
+  if (hasValue && (typeof body.value !== "number" || !Number.isFinite(body.value) || body.value <= 0)) {
     return NextResponse.json({ error: "value must be a positive number" }, { status: 400 });
   }
+  if (hasCoOwner) {
+    const ownerUser = await prisma.user.findUnique({
+      where: { id: before.ownerId },
+      select: { id: true, role: true },
+    });
+    if (!ownerUser) return NextResponse.json({ error: "owner not found" }, { status: 400 });
+    const coOwnerError = await validateCoOwnerId(body.coOwnerId, ownerUser);
+    if (coOwnerError) {
+      const status = coOwnerError === "coOwner not found" ? 404 : 400;
+      return NextResponse.json({ error: coOwnerError }, { status });
+    }
+  }
 
-  const updated = await prisma.deal.update({ where: { id }, data: { value: body.value } });
+  const updated = await prisma.deal.update({
+    where: { id },
+    data: {
+      ...(hasValue ? { value: body.value as number } : {}),
+      ...(hasCoOwner ? { coOwnerId: body.coOwnerId ? String(body.coOwnerId) : null } : {}),
+    },
+  });
   await logAudit({
     entityType: AuditEntityType.DEAL,
     entityId: updated.id,
     action: AuditAction.UPDATE,
     changedById: user.id,
-    before: { value: before.value },
-    after: { value: updated.value },
+    before: {
+      ...(hasValue ? { value: before.value } : {}),
+      ...(hasCoOwner ? { coOwnerId: before.coOwnerId } : {}),
+    },
+    after: {
+      ...(hasValue ? { value: updated.value } : {}),
+      ...(hasCoOwner ? { coOwnerId: updated.coOwnerId } : {}),
+    },
   });
 
   return NextResponse.json(updated);

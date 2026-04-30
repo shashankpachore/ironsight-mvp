@@ -58,6 +58,19 @@ describe("deals api - integrity and misuse coverage", () => {
     expect(res.status).toBe(403);
   });
 
+  it("manager can own a deal when the account is assigned to them", async () => {
+    const accountId = await prepAssignedAccount(users.manager.id);
+    const res = await createDeal({
+      byUserId: users.manager.id,
+      name: uniqueName("ManagerOwned"),
+      value: 1000,
+      accountId,
+    });
+    expect(res.status).toBe(201);
+    const body = await json<{ id: string; ownerId: string }>(res);
+    expect(body.ownerId).toBe(users.manager.id);
+  });
+
   it("admin cannot bypass assigned-user restriction", async () => {
     const accountId = await prepAssignedAccount(users.rep.id);
     const res = await createDeal({ byUserId: users.admin.id, name: uniqueName("AdminDenied"), value: 1000, accountId });
@@ -94,6 +107,64 @@ describe("deals api - integrity and misuse coverage", () => {
       prisma.account.findUnique({ where: { id: accountId } }),
     ]);
     expect(dbDeal?.ownerId).toBe(account?.assignedToId);
+  });
+
+  it("creates a deal with a REP co-owner and lets the co-owner view it", async () => {
+    const accountId = await prepAssignedAccount(users.rep.id);
+    const createRes = await createDeal({
+      byUserId: users.rep.id,
+      name: uniqueName("CoOwned"),
+      value: 120,
+      accountId,
+      coOwnerId: users.rep2.id,
+    });
+    expect(createRes.status).toBe(201);
+    const created = await json<{ id: string; coOwnerId: string; coOwner: { id: string } }>(createRes);
+    expect(created.coOwnerId).toBe(users.rep2.id);
+    expect(created.coOwner.id).toBe(users.rep2.id);
+
+    const readRes = await getDealByIdRoute(
+      makeRequest(`http://localhost/api/deals/${created.id}`, { userId: users.rep2.id }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(readRes.status).toBe(200);
+  });
+
+  it("rejects invalid co-owner assignments", async () => {
+    const accountId = await prepAssignedAccount(users.rep.id);
+
+    const sameOwnerRes = await createDeal({
+      byUserId: users.rep.id,
+      name: uniqueName("SameOwner"),
+      value: 120,
+      accountId,
+      coOwnerId: users.rep.id,
+    });
+    expect(sameOwnerRes.status).toBe(400);
+
+    const managerCoOwnerRes = await createDeal({
+      byUserId: users.rep.id,
+      name: uniqueName("ManagerCoOwner"),
+      value: 120,
+      accountId,
+      coOwnerId: users.manager.id,
+    });
+    expect(managerCoOwnerRes.status).toBe(400);
+  });
+
+  it("allows a manager co-owner only when the owner is a manager", async () => {
+    const managerOwnedAccount = await prepAssignedAccount(users.manager.id);
+    const managerCoOwnerRes = await createDeal({
+      byUserId: users.manager.id,
+      name: uniqueName("ManagerCoOwnerAllowed"),
+      value: 120,
+      accountId: managerOwnedAccount,
+      coOwnerId: users.manager2.id,
+    });
+    expect(managerCoOwnerRes.status).toBe(201);
+    const body = await json<{ ownerId: string; coOwnerId: string }>(managerCoOwnerRes);
+    expect(body.ownerId).toBe(users.manager.id);
+    expect(body.coOwnerId).toBe(users.manager2.id);
   });
 
   it("rep deal list contains only deals for accounts assigned to rep", async () => {

@@ -19,13 +19,21 @@ export async function GET(
   if (!deal) return NextResponse.json({ error: "deal not found" }, { status: 404 });
   await enforceExpiry([deal]);
   const canRead = await canAccessAssignedToId(user, deal.account.assignedToId);
-  if (!canRead) {
+  const canReadAsOwner = deal.ownerId === user.id || deal.coOwnerId === user.id;
+  if (!canRead && !canReadAsOwner) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   const logs = await prisma.interactionLog.findMany({
     where: { dealId },
-    include: { risks: true },
+    include: {
+      risks: true,
+      participants: {
+        include: {
+          user: { select: { id: true, name: true, email: true, role: true } },
+        },
+      },
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -33,6 +41,7 @@ export async function GET(
     logs.map((log) => ({
       ...log,
       risks: log.risks.map((risk) => risk.category),
+      participants: log.participants.map((participant) => participant.user),
     })),
   );
 }

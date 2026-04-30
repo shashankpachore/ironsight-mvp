@@ -46,6 +46,14 @@ type ManagerBreakdownRow = {
   outcomes: OutcomeSummary;
 };
 type TotalPipelineAccumulator = Omit<ManagerBreakdownRow, "managerId" | "managerName">;
+type HistoricalOwnerPipeline = {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  stages: PipelineTotals;
+  outcomes: OutcomeSummary;
+  totalPipeline: number;
+};
 
 type PipelineResponse = PipelineTotals | {
   pipeline?: PipelineTotals;
@@ -54,6 +62,14 @@ type PipelineResponse = PipelineTotals | {
   repPipelines: ManagerRepPipeline[];
   personalPipeline?: PersonalPipeline;
   managerBreakdown?: ManagerBreakdownRow[];
+};
+type MonthlyPipelineResponse = {
+  month: string;
+  source: "live" | "snapshot";
+  pipeline?: PipelineTotals;
+  totals: PipelineTotals;
+  outcomes: OutcomeSummary;
+  perRepBreakdown?: HistoricalOwnerPipeline[];
 };
 type PipelineStage = keyof PipelineTotals;
 type DrilldownStage = PipelineStage | keyof OutcomeSummary;
@@ -70,6 +86,24 @@ const EMPTY_OUTCOMES: OutcomeSummary = {
   CLOSED: { ...ZERO_STAGE_SUMMARY },
   LOST: { ...ZERO_STAGE_SUMMARY },
 };
+function currentPipelineMonth(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+function formatMonthLabel(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value;
+  return new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
+}
+function recentMonthOptions(count = 12) {
+  const options: string[] = [];
+  const date = new Date();
+  date.setDate(1);
+  for (let index = 0; index < count; index += 1) {
+    options.push(currentPipelineMonth(date));
+    date.setMonth(date.getMonth() - 1);
+  }
+  return options;
+}
 type DrilldownDeal = {
   id: string;
   value: number;
@@ -77,6 +111,8 @@ type DrilldownDeal = {
   lastActivityAt: string;
   expiryWarning?: "EXPIRED" | "EXPIRING_SOON" | null;
   daysToExpiry?: number | null;
+  owner?: { id: string; name: string } | null;
+  coOwner?: { id: string; name: string } | null;
   account: { name: string };
 };
 type DrilldownState = {
@@ -98,12 +134,31 @@ export default function PipelinePage() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [drilldownByKey, setDrilldownByKey] = useState<Record<string, DrilldownState>>({});
   const [selectedProduct, setSelectedProduct] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(() => currentPipelineMonth());
+  const [pipelineSource, setPipelineSource] = useState<"live" | "snapshot">("live");
+  const [historicalOwnerRows, setHistoricalOwnerRows] = useState<HistoricalOwnerPipeline[]>([]);
+  const monthOptions = recentMonthOptions(12);
   usePipeline({ product: selectedProduct, enabled: false });
 
-  async function loadPipeline(productOverride = selectedProduct) {
+  async function loadPipeline(productOverride = selectedProduct, monthOverride = selectedMonth) {
     setError("");
     setExpandedKey(null);
     setDrilldownByKey({});
+    if (monthOverride !== currentPipelineMonth()) {
+      try {
+        const body = await apiGet<MonthlyPipelineResponse>(`/api/pipeline/monthly?month=${monthOverride}`);
+        setData(body.totals ?? body.pipeline ?? null);
+        setOutcomes(body.outcomes ?? null);
+        setRepPipelines([]);
+        setPersonalPipeline(null);
+        setManagerBreakdown([]);
+        setHistoricalOwnerRows(body.perRepBreakdown ?? []);
+        setPipelineSource("snapshot");
+      } catch {
+        setError("Failed to load historical pipeline");
+      }
+      return;
+    }
     let body: PipelineResponse;
     try {
       body = await queryClient.fetchQuery({
@@ -125,6 +180,8 @@ export default function PipelinePage() {
       };
       setData(typed.totals ?? typed.pipeline ?? null);
       setOutcomes(typed.outcomes ?? null);
+      setHistoricalOwnerRows([]);
+      setPipelineSource("live");
       if (currentUser?.role === "ADMIN") {
         setRepPipelines([]);
         setPersonalPipeline(null);
@@ -148,6 +205,8 @@ export default function PipelinePage() {
       setOutcomes(null);
       setRepPipelines([]);
       setPersonalPipeline(null);
+      setHistoricalOwnerRows([]);
+      setPipelineSource("live");
     }
     setPersonalPipeline(null);
     setManagerBreakdown([]);
@@ -173,6 +232,8 @@ export default function PipelinePage() {
                   <span className="font-medium">{deal.account.name}</span>
                   <span>{formatInr(deal.value)}</span>
                   <span>{deal.stage}</span>
+                  <span className="text-gray-600">Owner: {deal.owner?.name ?? "Unknown"}</span>
+                  {deal.coOwner ? <span className="text-gray-600">Co-owner: {deal.coOwner.name}</span> : null}
                   <span className="text-gray-600">
                     Last activity:{" "}
                     {deal.lastActivityAt ? new Date(deal.lastActivityAt).toLocaleString() : "N/A"}
@@ -477,6 +538,42 @@ export default function PipelinePage() {
     );
   }
 
+  function renderReadOnlyStageCell(summary: StageSummary) {
+    return (
+      <td className="border p-2 text-center align-top">
+        <div className="font-semibold">{formatInr(summary.value)}</div>
+        <div className="text-xs text-gray-500">{formatStageCell(summary)}</div>
+      </td>
+    );
+  }
+
+  function renderHistoricalSixStagePipelineTable(pipeline: PipelineTotals, pipelineOutcomes: OutcomeSummary) {
+    return (
+      <table className="w-full border-collapse border text-sm">
+        <thead>
+          <tr>
+            <th className="border p-2 text-center">Access</th>
+            <th className="border p-2 text-center">Qualified</th>
+            <th className="border p-2 text-center">Evaluation</th>
+            <th className="border p-2 text-center">Committed</th>
+            <th className="border p-2 text-center">Closed Success</th>
+            <th className="border p-2 text-center">Lost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            {renderReadOnlyStageCell(pipeline.ACCESS)}
+            {renderReadOnlyStageCell(pipeline.QUALIFIED)}
+            {renderReadOnlyStageCell(pipeline.EVALUATION)}
+            {renderReadOnlyStageCell(pipeline.COMMITTED)}
+            {renderReadOnlyStageCell(pipelineOutcomes.CLOSED)}
+            {renderReadOnlyStageCell(pipelineOutcomes.LOST)}
+          </tr>
+        </tbody>
+      </table>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-4xl p-6 space-y-6">
       <div className="flex items-center gap-4 text-sm">
@@ -491,26 +588,58 @@ export default function PipelinePage() {
       <h1 className="text-2xl font-semibold">Pipeline</h1>
 
       <section className="border rounded-lg p-4 space-y-2">
-        <label className="block text-sm font-medium" htmlFor="pipeline-product-filter">
-          Filter by Product
-        </label>
-        <select
-          id="pipeline-product-filter"
-          className="w-full max-w-sm rounded border px-3 py-2 text-sm"
-          value={selectedProduct}
-          onChange={(e) => {
-            const product = e.target.value;
-            setSelectedProduct(product);
-            void loadPipeline(product);
-          }}
-        >
-          <option value="">All Products</option>
-          {PRODUCT_OPTIONS.map((product) => (
-            <option key={product} value={product}>
-              {product}
-            </option>
-          ))}
-        </select>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="block text-sm font-medium" htmlFor="pipeline-month-filter">
+              Month
+            </label>
+            <select
+              id="pipeline-month-filter"
+              className="mt-1 w-full max-w-sm rounded border px-3 py-2 text-sm"
+              value={selectedMonth}
+              onChange={(e) => {
+                const month = e.target.value;
+                setSelectedMonth(month);
+                void loadPipeline(selectedProduct, month);
+              }}
+            >
+              {monthOptions.map((month) => (
+                <option key={month} value={month}>
+                  {formatMonthLabel(month)}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-600">
+              Current month uses live pipeline. Past months use saved snapshots.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium" htmlFor="pipeline-product-filter">
+              Filter by Product
+            </label>
+            <select
+              id="pipeline-product-filter"
+              className="mt-1 w-full max-w-sm rounded border px-3 py-2 text-sm"
+              value={selectedProduct}
+              disabled={selectedMonth !== currentPipelineMonth()}
+              onChange={(e) => {
+                const product = e.target.value;
+                setSelectedProduct(product);
+                void loadPipeline(product, selectedMonth);
+              }}
+            >
+              <option value="">All Products</option>
+              {PRODUCT_OPTIONS.map((product) => (
+                <option key={product} value={product}>
+                  {product}
+                </option>
+              ))}
+            </select>
+            {selectedMonth !== currentPipelineMonth() ? (
+              <p className="mt-1 text-xs text-gray-600">Product filtering is available for live pipeline only.</p>
+            ) : null}
+          </div>
+        </div>
         {selectedProduct ? (
           <p className="text-sm text-gray-700">Showing pipeline for: {selectedProduct}</p>
         ) : null}
@@ -519,9 +648,18 @@ export default function PipelinePage() {
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {!data ? <p>Click &quot;Refresh pipeline&quot; to load data.</p> : (
         <div className="space-y-4">
-          {renderSection("Early Funnel", ["ACCESS", "QUALIFIED"], data)}
-          {renderSection("Mid", ["EVALUATION", "COMMITTED"], data)}
-          {outcomes ? (
+          {pipelineSource === "snapshot" && outcomes ? (
+            <section className="border rounded-lg p-4 space-y-2">
+              <h2 className="font-medium">Historical Snapshot Totals</h2>
+              {renderHistoricalSixStagePipelineTable(data, outcomes)}
+            </section>
+          ) : (
+            <>
+              {renderSection("Early Funnel", ["ACCESS", "QUALIFIED"], data)}
+              {renderSection("Mid", ["EVALUATION", "COMMITTED"], data)}
+            </>
+          )}
+          {pipelineSource === "live" && outcomes ? (
             <section className="border rounded-lg p-4 space-y-2">
               <h2 className="font-medium">Outcomes</h2>
               <table className="w-full border-collapse border text-sm">
@@ -559,7 +697,24 @@ export default function PipelinePage() {
             </section>
           ) : null}
 
-          {currentUser?.role === "ADMIN" ? (
+          {pipelineSource === "snapshot" ? (
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Historical Pipeline by Rep</h2>
+              {historicalOwnerRows.map((row) => (
+                <div key={row.ownerId} className="border rounded-lg p-4 space-y-2">
+                  <h3 className="font-medium">
+                    {row.ownerName} ({row.ownerEmail})
+                  </h3>
+                  {renderHistoricalSixStagePipelineTable(row.stages, row.outcomes)}
+                </div>
+              ))}
+              {historicalOwnerRows.length === 0 ? (
+                <p className="text-sm text-gray-600">No saved snapshot rows found for this month.</p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {pipelineSource === "live" && currentUser?.role === "ADMIN" ? (
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Pipeline by Manager</h2>
               <div className="overflow-x-auto">
@@ -677,7 +832,7 @@ export default function PipelinePage() {
             </section>
           ) : null}
 
-          {currentUser?.role === "MANAGER" ? (
+          {pipelineSource === "live" && currentUser?.role === "MANAGER" ? (
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Rep-wise Pipeline</h2>
               {repPipelines.map((rep) => (
@@ -699,7 +854,7 @@ export default function PipelinePage() {
             </section>
           ) : null}
 
-          {currentUser?.role === "MANAGER" ? (
+          {pipelineSource === "live" && currentUser?.role === "MANAGER" ? (
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">My Personal Pipeline</h2>
               <div className="border rounded-lg p-4 space-y-2">

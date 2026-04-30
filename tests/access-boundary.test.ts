@@ -5,6 +5,7 @@ import { GET as getAuditRoute } from "../app/api/audit/route";
 import { GET as getComplianceRoute } from "../app/api/activity/compliance/route";
 import { GET as getTodayRoute } from "../app/api/today/route";
 import { POST as postLogsRoute } from "../app/api/logs/route";
+import { GET as getLogsByDealRoute } from "../app/api/logs/[dealId]/route";
 import { prismaTest as prisma } from "../lib/test-prisma";
 import { makeRequest, resetDbAndSeedUsers } from "./helpers";
 
@@ -111,6 +112,38 @@ describe("access boundary and role enforcement", () => {
     );
 
     expect(res.status).toBe(403);
+  });
+
+  it("participant does not gain deal log access", async () => {
+    const repDeal = await createAssignedDeal({
+      adminId: users.admin.id,
+      ownerId: users.rep.id,
+      normalized: "boundary-participant-only",
+    });
+
+    const logRes = await postLogsRoute(
+      makeRequest("http://localhost/api/logs", {
+        method: "POST",
+        userId: users.rep.id,
+        body: {
+          dealId: repDeal.id,
+          interactionType: InteractionType.CALL,
+          outcome: Outcome.NO_RESPONSE,
+          stakeholderType: StakeholderType.UNKNOWN,
+          participants: [users.rep2.id],
+          risks: [RiskCategory.NO_ACCESS_TO_DM],
+          nextStepType: "FOLLOW_UP",
+          nextStepDate: daysFromNow(2).toISOString(),
+        },
+      }),
+    );
+    expect(logRes.status).toBe(201);
+
+    const readRes = await getLogsByDealRoute(
+      makeRequest(`http://localhost/api/logs/${repDeal.id}`, { userId: users.rep2.id }),
+      { params: Promise.resolve({ dealId: repDeal.id }) },
+    );
+    expect(readRes.status).toBe(403);
   });
 
   it("MANAGER cannot drill down to non-team rep in /api/today", async () => {

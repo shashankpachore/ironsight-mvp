@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useEffect, useState } from "react";
 import { useTestSession } from "@/components/test-session-bar";
-import { INDIAN_STATES_AND_UTS } from "@/lib/india-states";
+import { DISTRICTS_BY_STATE, STATES, type IndiaState } from "@/lib/geo/india-states-districts";
 
 type User = { id: string; email: string; role: string };
 type Account = {
@@ -22,14 +22,29 @@ type Account = {
 };
 
 type ImportPreviewRow = {
+  row: number;
   rowNumber: number;
   name: string;
   type: "SCHOOL" | "PARTNER";
   state: string;
   district: string;
+  input?: { state: string; district: string };
+  status?: "accepted" | "corrected" | "needs_review" | "rejected";
+  confidence?: "high" | "medium" | "low";
+  corrected?: { state: string; district: string };
+  suggestions?: string[];
+  stateSuggestions?: string[];
+  districtSuggestions?: string[];
   duplicateInFile: boolean;
   duplicateInDb: boolean;
   errors: string[];
+};
+
+type ImportSummary = {
+  accepted: number;
+  corrected: number;
+  needsReview: number;
+  rejected: number;
 };
 
 function formatAccountType(type: string | undefined) {
@@ -78,6 +93,9 @@ export default function AccountsPage() {
   }, [accounts]);
   const [importPreview, setImportPreview] = useState<ImportPreviewRow[]>([]);
   const [importSummary, setImportSummary] = useState("");
+  const [importStatusSummary, setImportStatusSummary] = useState<ImportSummary | null>(null);
+  const [approvedCorrections, setApprovedCorrections] = useState<Record<number, boolean>>({});
+  const [manualFixes, setManualFixes] = useState<Record<number, { state: string; district: string }>>({});
   const [searchQuery, setSearchQuery] = useState("");
 
   async function loadAll() {
@@ -205,7 +223,10 @@ export default function AccountsPage() {
       return;
     }
     setImportPreview(body.rows ?? []);
-    setImportSummary(`Rows: ${body.totalRows} | Valid: ${body.validRows}`);
+    setImportStatusSummary(body.summary ?? null);
+    setApprovedCorrections({});
+    setManualFixes({});
+    setImportSummary(`Rows: ${body.totalRows} | Valid: ${body.validRows} | Failed: ${body.failedRows?.length ?? 0}`);
   }
 
   async function confirmImport() {
@@ -216,6 +237,15 @@ export default function AccountsPage() {
     setError("");
     const formData = new FormData();
     formData.append("file", importFile);
+    formData.append(
+      "approvedCorrections",
+      JSON.stringify(
+        Object.entries(approvedCorrections)
+          .filter(([, approved]) => approved)
+          .map(([row]) => Number(row)),
+      ),
+    );
+    formData.append("manualFixes", JSON.stringify(manualFixes));
     const res = await fetch("/api/accounts/import?mode=confirm", {
       method: "POST",
       body: formData,
@@ -225,11 +255,24 @@ export default function AccountsPage() {
       setError(body.error || "Import failed");
       return;
     }
-    setImportSummary(`Imported: ${body.imported} | Skipped: ${body.skipped}`);
+    setImportPreview(body.rows ?? []);
+    setImportStatusSummary(body.summary ?? null);
+    setImportSummary(`Imported: ${body.successCount ?? body.imported} | Failed: ${body.failedRows?.length ?? 0}`);
     await loadAll();
   }
 
+  function updateManualFix(rowNumber: number, patch: Partial<{ state: string; district: string }>) {
+    setManualFixes((prev) => {
+      const current = prev[rowNumber] ?? { state: "", district: "" };
+      const next = { ...current, ...patch };
+      if ("state" in patch) next.district = "";
+      return { ...prev, [rowNumber]: next };
+    });
+  }
+
   const nameLabel = requestType === "PARTNER" ? "Partner Name" : "School Name";
+  const selectedState = STATES.includes(requestState as IndiaState) ? (requestState as IndiaState) : null;
+  const districtOptions = selectedState ? DISTRICTS_BY_STATE[selectedState] : [];
   const formValid =
     requestType && name.trim().length > 0 && district.trim().length > 0 && requestState.trim().length > 0;
   const needsAssignment = [...accounts].filter(
@@ -306,16 +349,113 @@ export default function AccountsPage() {
           </button>
         </div>
         {importSummary ? <p className="text-sm">{importSummary}</p> : null}
+        {importStatusSummary ? (
+          <div className="grid gap-2 text-sm sm:grid-cols-4">
+            <div className="rounded border border-green-200 bg-green-50 p-2">
+              ✅ accepted: {importStatusSummary.accepted}
+            </div>
+            <div className="rounded border border-yellow-200 bg-yellow-50 p-2">
+              ⚠ corrected: {importStatusSummary.corrected}
+            </div>
+            <div className="rounded border border-blue-200 bg-blue-50 p-2">
+              🔍 needs review: {importStatusSummary.needsReview}
+            </div>
+            <div className="rounded border border-red-200 bg-red-50 p-2">
+              ❌ rejected: {importStatusSummary.rejected}
+            </div>
+          </div>
+        ) : null}
         {importPreview.length > 0 ? (
-          <div className="border rounded p-3 max-h-60 overflow-auto text-sm space-y-1">
-            {importPreview.map((row) => (
-              <p key={row.rowNumber}>
-                Row {row.rowNumber}: {row.name} ({row.type}) - {row.state}/{row.district}
-                {row.duplicateInDb ? " | duplicate in DB" : ""}
-                {row.duplicateInFile ? " | duplicate in file" : ""}
-                {row.errors.length ? ` | ${row.errors.join(", ")}` : ""}
-              </p>
-            ))}
+          <div className="border rounded p-3 max-h-80 overflow-auto text-sm space-y-3">
+            {importPreview.map((row) => {
+              const rowNumber = row.rowNumber ?? row.row;
+              const fix = manualFixes[rowNumber] ?? { state: "", district: "" };
+              const fixState = STATES.includes(fix.state as IndiaState) ? (fix.state as IndiaState) : null;
+              const fixDistrictOptions = fixState ? DISTRICTS_BY_STATE[fixState] : [];
+
+              return (
+                <div key={rowNumber} className="rounded border p-3 space-y-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium">
+                        Row {rowNumber}: {row.name} ({row.type})
+                      </p>
+                      <p className="text-gray-700">
+                        Input: {row.input?.state ?? row.state}/{row.input?.district ?? row.district}
+                      </p>
+                      <p className="text-gray-700">
+                        Status: {row.status ?? (row.errors.length ? "rejected" : "accepted")}
+                        {row.confidence ? ` (${row.confidence} confidence)` : ""}
+                      </p>
+                    </div>
+                    {row.status === "corrected" && row.corrected ? (
+                      <label className="flex items-center gap-2 rounded border px-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={approvedCorrections[rowNumber] ?? false}
+                          onChange={(e) =>
+                            setApprovedCorrections((prev) => ({
+                              ...prev,
+                              [rowNumber]: e.target.checked,
+                            }))
+                          }
+                        />
+                        Approve correction
+                      </label>
+                    ) : null}
+                  </div>
+
+                  {row.status === "corrected" && row.corrected ? (
+                    <p className="text-yellow-800">
+                      Suggested correction: {row.input?.state}/{row.input?.district} → {row.corrected.state}/
+                      {row.corrected.district}
+                    </p>
+                  ) : null}
+
+                  {row.status === "needs_review" ? (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <div>
+                        <p className="mb-1 text-gray-700">
+                          Suggestions: {(row.suggestions ?? []).join(", ") || "No close match"}
+                        </p>
+                        <select
+                          className="border rounded px-2 py-1 w-full"
+                          value={fix.state}
+                          onChange={(e) => updateManualFix(rowNumber, { state: e.target.value })}
+                        >
+                          <option value="">Select state</option>
+                          {STATES.map((state) => (
+                            <option key={state} value={state}>
+                              {state}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <p className="mb-1 text-gray-700">Manual district</p>
+                        <select
+                          className="border rounded px-2 py-1 w-full"
+                          value={fix.district}
+                          onChange={(e) => updateManualFix(rowNumber, { district: e.target.value })}
+                          disabled={!fixState}
+                        >
+                          <option value="">{fixState ? "Select district" : "Select state first"}</option>
+                          {fixDistrictOptions.map((districtOption) => (
+                            <option key={districtOption} value={districtOption}>
+                              {districtOption}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {row.duplicateInDb ? <p className="text-red-700">Duplicate in DB</p> : null}
+                  {row.duplicateInFile ? <p className="text-red-700">Duplicate in file</p> : null}
+                  {row.errors.length ? <p className="text-red-700">{row.errors.join(", ")}</p> : null}
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </section>
@@ -362,18 +502,6 @@ export default function AccountsPage() {
             />
           </div>
           <div>
-            <label htmlFor="req-district" className="block text-sm font-medium mb-1">
-              District
-            </label>
-            <input
-              id="req-district"
-              className="border rounded px-3 py-2 w-full"
-              value={district}
-              onChange={(e) => setDistrict(e.target.value)}
-              required
-            />
-          </div>
-          <div>
             <label htmlFor="req-state" className="block text-sm font-medium mb-1">
               State
             </label>
@@ -381,13 +509,36 @@ export default function AccountsPage() {
               id="req-state"
               className="border rounded px-3 py-2 w-full text-sm"
               value={requestState}
-              onChange={(e) => setRequestState(e.target.value)}
+              onChange={(e) => {
+                setRequestState(e.target.value);
+                setDistrict("");
+              }}
               required
             >
               <option value="">Select state</option>
-              {INDIAN_STATES_AND_UTS.map((s) => (
+              {STATES.map((s) => (
                 <option key={s} value={s}>
                   {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="req-district" className="block text-sm font-medium mb-1">
+              District
+            </label>
+            <select
+              id="req-district"
+              className="border rounded px-3 py-2 w-full text-sm"
+              value={district}
+              onChange={(e) => setDistrict(e.target.value)}
+              disabled={!selectedState}
+              required
+            >
+              <option value="">{selectedState ? "Select district" : "Select state first"}</option>
+              {districtOptions.map((d) => (
+                <option key={d} value={d}>
+                  {d}
                 </option>
               ))}
             </select>

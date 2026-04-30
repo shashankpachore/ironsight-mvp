@@ -4,6 +4,7 @@ import { normalizeCompanyName } from "@/lib/accounts";
 import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/authz";
+import { validateStateDistrict } from "@/lib/geo/india-states-districts";
 import { prisma } from "@/lib/prisma";
 
 export async function PATCH(
@@ -40,8 +41,17 @@ export async function PATCH(
     data.normalized = normalizeCompanyName(body.name);
   }
   if (body.type && Object.values(AccountType).includes(body.type)) data.type = body.type;
-  if (typeof body.state === "string" && body.state.trim()) data.state = body.state.trim();
-  if (typeof body.district === "string" && body.district.trim()) data.district = body.district.trim();
+  if (typeof body.state === "string" || typeof body.district === "string") {
+    const nextState = typeof body.state === "string" ? body.state : before.state;
+    const nextDistrict = typeof body.district === "string" ? body.district : before.district;
+    if (!nextState || !nextDistrict) {
+      return NextResponse.json({ error: "state and district are required" }, { status: 400 });
+    }
+    const geo = validateStateDistrict(nextState, nextDistrict);
+    if (!geo.ok) return NextResponse.json({ error: geo.error }, { status: 400 });
+    data.state = geo.state;
+    data.district = geo.district;
+  }
   if (body.status && Object.values(AccountStatus).includes(body.status)) data.status = body.status;
 
   const updated = await prisma.account.update({

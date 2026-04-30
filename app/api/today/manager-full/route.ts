@@ -1,6 +1,7 @@
 import { DealStatus, Outcome, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { buildDealWhere } from "@/lib/access";
 import { requireRole } from "@/lib/authz";
 import { enforceExpiry, getActiveDeals, getExpiryWarning } from "@/lib/expiry";
 import { addDaysYmd, formatYmdInIST, istYmdToUtcStart } from "@/lib/ist-time";
@@ -14,6 +15,8 @@ const DAY_MS = 86_400_000;
 type TodayItem = {
   dealId: string;
   accountName: string;
+  owner: { id: string; name: string } | null;
+  coOwner: { id: string; name: string } | null;
   nextStepType: string | null;
   nextStepDate: string;
   lastActivityAt: string;
@@ -136,7 +139,7 @@ export async function GET(request: Request) {
     ...reps.map((rep) => [rep.id, { name: rep.name, email: rep.email }] as const),
   ]);
 
-  const accessWhere = { account: { assignedToId: { in: assigneeIds } } };
+  const accessWhere = await buildDealWhere(user);
   const activeDealRows = await prisma.deal.findMany({
     where: { ...accessWhere, status: DealStatus.ACTIVE },
     select: {
@@ -148,6 +151,7 @@ export async function GET(request: Request) {
       nextStepDate: true,
       ownerId: true,
       owner: { select: { name: true } },
+      coOwner: { select: { id: true, name: true } },
       account: { select: { name: true, assignedToId: true } },
     },
   });
@@ -224,6 +228,8 @@ export async function GET(request: Request) {
         dealId: deal.id,
         assigneeId: deal.account.assignedToId,
         accountName: deal.account.name,
+        owner: deal.owner ? { id: deal.ownerId, name: deal.owner.name } : null,
+        coOwner: deal.coOwner,
         nextStepType: deal.nextStepType,
         nextStepDate: deal.nextStepDate!.toISOString(),
         lastActivityAt: latestLog.toISOString(),

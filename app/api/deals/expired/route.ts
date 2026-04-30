@@ -39,6 +39,9 @@ export async function GET(request: Request) {
       owner: {
         select: { id: true, name: true },
       },
+      coOwner: {
+        select: { id: true, name: true },
+      },
       account: {
         select: {
           name: true,
@@ -56,6 +59,7 @@ export async function GET(request: Request) {
       name: deal.name,
       value: deal.value,
       owner: deal.owner,
+      coOwner: deal.coOwner,
       account: deal.account,
       lastActivityAt: deal.lastActivityAt,
       daysSinceLastActivity: daysSince(deal.lastActivityAt),

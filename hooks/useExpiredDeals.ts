@@ -9,6 +9,10 @@ export type ExpiredDeal = {
     id: string;
     name: string;
   };
+  coOwner: {
+    id: string;
+    name: string;
+  } | null;
   account: {
     name: string;
     district: string;

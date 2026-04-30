@@ -54,6 +54,7 @@ function daysFromNow(days: number): Date {
 
 async function resetDbAndSeedUsers(): Promise<SeededUsers> {
   await prisma.interactionRisk.deleteMany();
+  await prisma.interactionLogParticipant.deleteMany();
   await prisma.interactionLog.deleteMany();
   await prisma.deal.deleteMany();
   await prisma.account.deleteMany();

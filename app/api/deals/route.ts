@@ -1,4 +1,4 @@
-import { AuditAction, AuditEntityType, DealStatus, Prisma } from "@prisma/client";
+import { AuditAction, AuditEntityType, DealStatus, Prisma, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { validateDealCreationAccess } from "@/lib/account-access";
 import { buildDealWhere } from "@/lib/access";
@@ -21,6 +21,9 @@ type DealWithListRelations = Prisma.DealGetPayload<{
     owner: {
       select: { id: true; name: true };
     };
+    coOwner: {
+      select: { id: true; name: true };
+    };
     account: {
       select: {
         id: true;
@@ -35,6 +38,31 @@ type DealWithListRelations = Prisma.DealGetPayload<{
     };
   };
 }>;
+
+type DealOwnerForValidation = {
+  id: string;
+  role: UserRole;
+};
+
+async function validateCoOwnerId(coOwnerId: unknown, owner: DealOwnerForValidation) {
+  if (coOwnerId == null || coOwnerId === "") return null;
+  if (typeof coOwnerId !== "string") return "coOwnerId must be a string";
+  if (coOwnerId === owner.id) return "coOwnerId cannot equal ownerId";
+
+  const coOwner = await prisma.user.findUnique({
+    where: { id: coOwnerId },
+    select: { id: true, role: true },
+  });
+  if (!coOwner) return "coOwner not found";
+  if (owner.role === UserRole.MANAGER) {
+    if (coOwner.role !== UserRole.REP && coOwner.role !== UserRole.MANAGER) {
+      return "coOwner must be a REP or MANAGER when owner is MANAGER";
+    }
+    return null;
+  }
+  if (coOwner.role !== UserRole.REP) return "coOwner must be a REP when owner is REP";
+  return null;
+}
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -59,6 +87,17 @@ export async function POST(request: Request) {
   if (!account.assignedToId) {
     return NextResponse.json({ error: "account must be assigned before creating deals" }, { status: 400 });
   }
+  const ownerUser = await prisma.user.findUnique({
+    where: { id: account.assignedToId },
+    select: { id: true, role: true },
+  });
+  if (!ownerUser) return NextResponse.json({ error: "owner not found" }, { status: 400 });
+
+  const coOwnerError = await validateCoOwnerId(body.coOwnerId, ownerUser);
+  if (coOwnerError) {
+    const status = coOwnerError === "coOwner not found" ? 404 : 400;
+    return NextResponse.json({ error: coOwnerError }, { status });
+  }
 
   const deal = await prisma.deal.create({
     data: {
@@ -66,7 +105,11 @@ export async function POST(request: Request) {
       companyName: account.name,
       value: body.value,
       ownerId: account.assignedToId,
+      coOwnerId: body.coOwnerId || null,
       accountId: account.id,
+    },
+    include: {
+      coOwner: { select: { id: true, name: true } },
     },
   });
 
@@ -128,6 +171,9 @@ export async function GET(request: Request) {
       where,
       include: {
         owner: {
+          select: { id: true, name: true },
+        },
+        coOwner: {
           select: { id: true, name: true },
         },
         account: {

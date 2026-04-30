@@ -15,6 +15,10 @@ type DealItem = {
     id: string;
     name: string;
   } | null;
+  coOwner?: {
+    id: string;
+    name: string;
+  } | null;
   account: {
     name: string;
     assignedTo?: {
@@ -79,7 +83,10 @@ export function DealsListSearch({
           <p className="text-sm text-gray-700">Product: {deal.name}</p>
           <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
           <p className="text-sm">Stage: {deal.stage}</p>
-          <p className="text-xs text-gray-600">Owner: {deal.owner?.name || "Unassigned"}</p>
+          <p className="text-xs text-gray-600">Owner (primary, accountable): {deal.owner?.name || "Unassigned"}</p>
+          {deal.coOwner ? (
+            <p className="text-xs text-gray-600">Co-owner (execution support): {deal.coOwner.name}</p>
+          ) : null}
           <p className="text-sm">Last activity: {deal.lastActivityAtLabel}</p>
           <p className="text-sm">
             Missing: {deal.missingSignals.length ? deal.missingSignals.join(", ") : "None"}
@@ -103,7 +110,10 @@ export function DealsListSearch({
           <p className="text-sm text-gray-700">Product: {deal.name}</p>
           <p className="text-sm">Deal Value: {formatInr(deal.value)}</p>
           <p className="text-sm">Stage: {deal.stage}</p>
-          <p className="text-xs text-gray-600">Owner: {deal.owner?.name || "Unassigned"}</p>
+          <p className="text-xs text-gray-600">Owner (primary, accountable): {deal.owner?.name || "Unassigned"}</p>
+          {deal.coOwner ? (
+            <p className="text-xs text-gray-600">Co-owner (execution support): {deal.coOwner.name}</p>
+          ) : null}
           <p className="text-sm">Last activity: {deal.lastActivityAtLabel}</p>
           <p className="text-sm">
             Missing: {deal.missingSignals.length ? deal.missingSignals.join(", ") : "None"}

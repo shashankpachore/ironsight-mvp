@@ -73,6 +73,50 @@ describe("interaction logs - validation and abuse tests", () => {
     expect(res.status).toBe(201);
   });
 
+  it("co-owner can log on a deal", async () => {
+    await prisma.deal.update({ where: { id: repDealId }, data: { coOwnerId: users.rep2.id } });
+    const res = await logInteraction({ byUserId: users.rep2.id, dealId: repDealId, outcome: Outcome.NO_RESPONSE });
+    expect(res.status).toBe(201);
+  });
+
+  it("manager can log when they own or co-own the deal", async () => {
+    const managerAcc = await json<{ id: string }>(
+      await createAccount({ byUserId: users.admin.id, name: uniqueName("ManagerLogAcc") }),
+    );
+    await approveAccount({ byUserId: users.admin.id, accountId: managerAcc.id });
+    await assignAccount({ byUserId: users.admin.id, accountId: managerAcc.id, assigneeId: users.manager.id });
+    const managerOwnedDeal = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.manager.id,
+        name: uniqueName("ManagerOwnedLogDeal"),
+        value: 100,
+        accountId: managerAcc.id,
+      }),
+    );
+    const ownerLogRes = await logInteraction({
+      byUserId: users.manager.id,
+      dealId: managerOwnedDeal.id,
+      outcome: Outcome.NO_RESPONSE,
+    });
+    expect(ownerLogRes.status).toBe(201);
+
+    const coOwnedDeal = await json<{ id: string }>(
+      await createDeal({
+        byUserId: users.manager.id,
+        name: uniqueName("ManagerCoOwnedLogDeal"),
+        value: 100,
+        accountId: managerAcc.id,
+        coOwnerId: users.manager2.id,
+      }),
+    );
+    const coOwnerLogRes = await logInteraction({
+      byUserId: users.manager2.id,
+      dealId: coOwnedDeal.id,
+      outcome: Outcome.NO_RESPONSE,
+    });
+    expect(coOwnerLogRes.status).toBe(201);
+  });
+
   it("rep cannot log on unassigned deal", async () => {
     const res = await logInteraction({ byUserId: users.rep.id, dealId: rep2DealId, outcome: Outcome.NO_RESPONSE });
     expect(res.status).toBe(403);
@@ -132,6 +176,34 @@ describe("interaction logs - validation and abuse tests", () => {
     const rows = await json<Array<{ risks: string[] }>>(res);
     expect(res.status).toBe(200);
     expect(Array.isArray(rows[0].risks)).toBe(true);
+  });
+
+  it("stores and returns interaction participants", async () => {
+    await logInteraction({
+      byUserId: users.rep.id,
+      dealId: repDealId,
+      outcome: Outcome.NO_RESPONSE,
+      participants: [users.rep.id, users.manager.id],
+    });
+    const res = await getLogsByDealRoute(
+      makeRequest(`http://localhost/api/logs/${repDealId}`, { userId: users.rep.id }),
+      { params: Promise.resolve({ dealId: repDealId }) },
+    );
+    const rows = await json<Array<{ participants: Array<{ id: string }> }>>(res);
+    expect(res.status).toBe(200);
+    expect(rows[0].participants.map((participant) => participant.id).sort()).toEqual(
+      [users.manager.id, users.rep.id].sort(),
+    );
+  });
+
+  it("rejects duplicate participants", async () => {
+    const res = await logInteraction({
+      byUserId: users.rep.id,
+      dealId: repDealId,
+      outcome: Outcome.NO_RESPONSE,
+      participants: [users.rep.id, users.rep.id],
+    });
+    expect(res.status).toBe(400);
   });
 
   it("rep forbidden from viewing logs of unassigned deal", async () => {

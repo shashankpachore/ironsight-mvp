@@ -5,6 +5,8 @@ import Link from "next/link";
 export type TodayBucketItem = {
   dealId: string;
   accountName: string;
+  owner?: { id: string; name: string } | null;
+  coOwner?: { id: string; name: string } | null;
   nextStepType: string | null;
   nextStepDate: string;
   lastActivityAt: string;
@@ -38,6 +40,12 @@ export function TodayBucket({
           {items.map((item) => (
             <div key={item.dealId} className="border rounded p-3 space-y-1">
               <p className="font-medium">{item.accountName}</p>
+              {item.owner || item.coOwner ? (
+                <p className="text-xs text-gray-600">
+                  Owner: {item.owner?.name ?? "Unknown"}
+                  {item.coOwner ? ` | Co-owner: ${item.coOwner.name}` : ""}
+                </p>
+              ) : null}
               <p className="text-sm">Next Step: {item.nextStepType ?? "Unknown"}</p>
               <p className="text-sm">Next Step Date: {formatDateLabel(item.nextStepDate)}</p>
               <p className="text-sm text-gray-700">

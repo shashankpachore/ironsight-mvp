@@ -1,8 +1,25 @@
 import { NextResponse } from "next/server";
+import { assertDealAccess } from "@/lib/access";
+import { getCurrentUser } from "@/lib/auth";
+import { getMissingSignals } from "@/lib/deals";
 
-export async function GET() {
-  return NextResponse.json(
-    { error: "deprecated endpoint. use /api/deals/:id" },
-    { status: 410 },
-  );
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await getCurrentUser(request);
+  if (!user) return NextResponse.json({ error: "user not found" }, { status: 401 });
+
+  const { id } = await params;
+  try {
+    await assertDealAccess(user, id);
+  } catch (error) {
+    if (error instanceof Error && error.message === "ACCESS_DENIED") {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    throw error;
+  }
+
+  const missingSignals = await getMissingSignals(id);
+  return NextResponse.json({ missingSignals });
 }

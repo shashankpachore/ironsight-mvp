@@ -46,6 +46,7 @@ export default function ExpiredDealsPage() {
                   <th className="border-b p-3 text-left">Deal Name</th>
                   <th className="border-b p-3 text-left">Account Name</th>
                   <th className="border-b p-3 text-left">Owner Name</th>
+                  <th className="border-b p-3 text-left">Co-owner</th>
                   <th className="border-b p-3 text-left">Value</th>
                   <th className="border-b p-3 text-left">Last Activity Date</th>
                   <th className="border-b p-3 text-left">Days Since Last Activity</th>
@@ -70,6 +71,7 @@ export default function ExpiredDealsPage() {
                     <td className="border-b p-3 font-medium">{deal.name}</td>
                     <td className="border-b p-3">{deal.account.name}</td>
                     <td className="border-b p-3">{deal.owner.name}</td>
+                    <td className="border-b p-3">{deal.coOwner?.name ?? "-"}</td>
                     <td className="border-b p-3">{formatInr(deal.value)}</td>
                     <td className="border-b p-3">{new Date(deal.lastActivityAt).toLocaleString()}</td>
                     <td className={`border-b p-3 ${inactivityClass(deal.daysSinceLastActivity)}`}>

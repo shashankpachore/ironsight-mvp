@@ -7,6 +7,12 @@ export type InteractionLogItem = {
   outcome: OutcomeValue;
   createdAt: string;
   risks: string[];
+  participants: Array<{
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  }>;
 };
 
 export function useInteractionLogs(dealId: string | null | undefined) {

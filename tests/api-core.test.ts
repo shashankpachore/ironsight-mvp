@@ -113,6 +113,7 @@ describe("api core - next step enforcement and today", () => {
 
   beforeEach(async () => {
     await prisma.interactionRisk.deleteMany();
+    await prisma.interactionLogParticipant.deleteMany();
     await prisma.interactionLog.deleteMany();
 
     // Keep fixtures stable per test without full DB wipe.

@@ -60,7 +60,7 @@ export async function resetDbAndSeedUsers(): Promise<SeededUsers> {
   if (url.startsWith("postgres")) {
     return prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(
-        `TRUNCATE TABLE "InteractionRisk", "InteractionLog", "Deal", "Account", "AuditLog", "User" RESTART IDENTITY CASCADE;`,
+        `TRUNCATE TABLE "InteractionLogParticipant", "InteractionRisk", "InteractionLog", "PipelineSnapshot", "Deal", "Account", "AuditLog", "User" RESTART IDENTITY CASCADE;`,
       );
       return seed(tx);
     });
@@ -68,7 +68,9 @@ export async function resetDbAndSeedUsers(): Promise<SeededUsers> {
 
   return prisma.$transaction(async (tx) => {
     await tx.interactionRisk.deleteMany();
+    await tx.interactionLogParticipant.deleteMany();
     await tx.interactionLog.deleteMany();
+    await tx.pipelineSnapshot.deleteMany();
     await tx.deal.deleteMany();
     await tx.account.deleteMany();
     await tx.auditLog.deleteMany();
@@ -142,13 +144,20 @@ export async function createDeal(params: {
   name: string;
   value: number;
   accountId: string;
+  coOwnerId?: string | null;
 }) {
   const product = PRODUCT_OPTIONS.includes(params.name) ? params.name : PRODUCT_OPTIONS[0];
   return createDealRoute(
     makeRequest("http://localhost/api/deals", {
       method: "POST",
       userId: params.byUserId,
-      body: { name: product, companyName: "IGNORED", value: params.value, accountId: params.accountId },
+      body: {
+        name: product,
+        companyName: "IGNORED",
+        value: params.value,
+        accountId: params.accountId,
+        ...(params.coOwnerId !== undefined ? { coOwnerId: params.coOwnerId } : {}),
+      },
     }),
   );
 }
@@ -179,6 +188,7 @@ export async function logInteraction(params: {
   stakeholderType?: StakeholderType;
   risks?: RiskCategory[];
   notes?: string;
+  participants?: string[];
 }) {
   const outcome = params.outcome ?? Outcome.FOLLOW_UP_DONE;
   return logInteractionRoute(
@@ -192,6 +202,7 @@ export async function logInteraction(params: {
         stakeholderType: params.stakeholderType ?? StakeholderType.UNKNOWN,
         risks: params.risks ?? defaultRisksForOutcome(outcome),
         notes: params.notes ?? "test",
+        ...(params.participants !== undefined ? { participants: params.participants } : {}),
         ...defaultNextStepRequestFields(outcome),
       },
     }),

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Outcome, StakeholderType } from "@prisma/client";
 import { GET as pipelineGET } from "../app/api/pipeline/route";
-import { GET as managerBreakdownGET } from "../app/api/pipeline/manager-breakdown/route";
 import { approveAccount, assignAccount, createAccount, createDeal, json, logInteraction, makeRequest, resetDbAndSeedUsers, uniqueName } from "./helpers";
 import { PRODUCT_OPTIONS } from "../lib/products";
 import { prismaTest as prisma } from "../lib/test-prisma";
@@ -11,6 +10,13 @@ function totalCount(p: Record<string, { count: number }>) {
 }
 function totalValue(p: Record<string, { value: number }>) {
   return Object.values(p).reduce((sum, row) => sum + row.value, 0);
+}
+function pipelineFromResponse(body: unknown): Record<string, { count: number; value: number }> {
+  const record = body as {
+    pipeline?: Record<string, { count: number; value: number }>;
+    totals?: Record<string, { count: number; value: number }>;
+  };
+  return record.totals ?? record.pipeline ?? (body as Record<string, { count: number; value: number }>);
 }
 const STAGES = ["ACCESS", "QUALIFIED", "EVALUATION", "COMMITTED"] as const;
 
@@ -34,13 +40,21 @@ describe("pipeline aggregation consistency under mutations", () => {
 
   it("admin pipeline count matches all deals", async () => {
     const pipe = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.admin.id }));
-    const body = (await pipe.json()) as Record<string, { count: number }>;
+    const body = pipelineFromResponse(await pipe.json());
     expect(totalCount(body)).toBe(2);
   });
 
   it("admin pipeline value matches all visible deals", async () => {
     const pipe = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.admin.id }));
-    const body = (await pipe.json()) as Record<string, { value: number }>;
+    const body = pipelineFromResponse(await pipe.json());
+    expect(totalValue(body)).toBe(400);
+  });
+
+  it("co-owner does not duplicate admin pipeline totals", async () => {
+    await prisma.deal.update({ where: { id: repDealId }, data: { coOwnerId: users.rep2.id } });
+    const pipe = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.admin.id }));
+    const body = pipelineFromResponse(await pipe.json());
+    expect(totalCount(body)).toBe(2);
     expect(totalValue(body)).toBe(400);
   });
 
@@ -105,19 +119,22 @@ describe("pipeline aggregation consistency under mutations", () => {
       },
     });
 
-    const totalRes = await pipelineGET(makeRequest("http://localhost/api/pipeline", { userId: users.admin.id }));
-    const totals = (await totalRes.json()) as Record<string, { count: number; value: number }>;
+    const totalRes = await pipelineGET(
+      makeRequest("http://localhost/api/pipeline?includeOutcomes=1", { userId: users.admin.id }),
+    );
+    const totalBody = (await totalRes.json()) as {
+      pipeline?: Record<string, { count: number; value: number }>;
+      totals?: Record<string, { count: number; value: number }>;
+      managerBreakdown?: Array<{
+        managerId: string;
+        stages: Record<(typeof STAGES)[number], { count: number; value: number }>;
+        totalValue: number;
+      }>;
+    };
+    const totals = pipelineFromResponse(totalBody);
     expect(totalRes.status).toBe(200);
 
-    const breakdownRes = await managerBreakdownGET(
-      makeRequest("http://localhost/api/pipeline/manager-breakdown", { userId: users.admin.id }),
-    );
-    const rows = (await breakdownRes.json()) as Array<{
-      managerId: string;
-      stages: Record<(typeof STAGES)[number], { count: number; value: number }>;
-      totalValue: number;
-    }>;
-    expect(breakdownRes.status).toBe(200);
+    const rows = totalBody.managerBreakdown ?? [];
 
     const breakdownCountTotal = STAGES.reduce(
       (sum, stage) => sum + rows.reduce((rowSum, row) => rowSum + row.stages[stage].count, 0),
