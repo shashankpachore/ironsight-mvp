@@ -67,6 +67,13 @@ export function isCurrentSnapshotMonth(month: string, now = new Date()): boolean
   return month === currentSnapshotMonth(now);
 }
 
+export function previousSnapshotMonth(now = new Date()): string {
+  const date = new Date(now);
+  date.setUTCDate(1); // Set to 1st to avoid month skipping at end of month
+  date.setUTCMonth(date.getUTCMonth() - 1);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 export function emptyPipeline(): PipelineShape {
   return {
     ACCESS: { count: 0, value: 0 },
