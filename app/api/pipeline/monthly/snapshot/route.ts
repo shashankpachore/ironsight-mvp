@@ -8,7 +8,7 @@ import {
   previousSnapshotMonth,
 } from "@/lib/pipeline/monthly-snapshot";
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization");
   const isCron =
     process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`;
