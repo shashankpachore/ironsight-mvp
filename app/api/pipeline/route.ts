@@ -11,7 +11,7 @@ type StageKey = "ACCESS" | "QUALIFIED" | "EVALUATION" | "COMMITTED";
 type PipelineShape = Record<StageKey, { count: number; value: number }>;
 type TerminalStageKey = "CLOSED" | "LOST";
 type TerminalOutcomesShape = Record<TerminalStageKey, { count: number; value: number }>;
-type ManagerBreakdownRow = {
+export type ManagerBreakdownRow = {
   managerId: string;
   managerName: string;
   stages: PipelineShape;
@@ -200,9 +200,6 @@ export async function GET(request: Request) {
             }
           : {}),
       });
-    }
-    if (managerBreakdown) {
-      return NextResponse.json({ pipeline, outcomes, managerBreakdown });
     }
     return NextResponse.json(pipeline);
   }

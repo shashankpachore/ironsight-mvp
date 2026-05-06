@@ -89,8 +89,11 @@ function parseCsv(content: string) {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  if (lines.length < 2) return { headers: [] as string[], rows: [] as string[][] };
-  const headers = lines[0].split(",").map((h) => h.trim());
+  const firstLine = lines[0];
+  if (lines.length < 2 || !firstLine) {
+    return { headers: [] as string[], rows: [] as string[][] };
+  }
+  const headers = firstLine.split(",").map((h) => h.trim());
   const rows = lines.slice(1).map((line) => line.split(",").map((c) => c.trim()));
   return { headers, rows };
 }
@@ -297,7 +300,7 @@ export async function POST(request: Request) {
         entityType: AuditEntityType.ACCOUNT,
         entityId: account.id,
         action: AuditAction.CREATE,
-        changedById: user!.id,
+        changedById: user.id,
         before: null,
         after: account,
       }),

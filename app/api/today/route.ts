@@ -163,11 +163,11 @@ export async function GET(request: Request) {
       });
       assigneeDirectory = new Map([
         [user.id, { name: user.name, email: user.email }],
-        ...reps.map((rep) => [rep.id, { name: rep.name, email: rep.email }] as const),
+        ...(reps || []).map((rep) => [rep.id, { name: rep.name, email: rep.email }] as const),
       ]);
     }
 
-    const where = {
+    const where: any = {
       ...(await buildDealWhere(user)),
       status: DealStatus.ACTIVE,
     };
@@ -188,7 +188,7 @@ export async function GET(request: Request) {
       },
     });
 
-    const activeDeals = getActiveDeals(await enforceExpiry(deals));
+    const activeDeals = getActiveDeals(await enforceExpiry(deals || []));
     const dealIds = activeDeals.map((deal) => deal.id);
     const [latestLogs, outcomes] = await Promise.all([
       prisma.interactionLog.groupBy({
@@ -201,22 +201,23 @@ export async function GET(request: Request) {
         select: { dealId: true, outcome: true, createdAt: true },
       }),
     ]);
-    const latestLogByDeal = new Map(latestLogs.map((row) => [row.dealId, row._max.createdAt]));
+
+    const latestLogByDeal = new Map((latestLogs || []).map((row) => [row.dealId, row._max.createdAt]));
     const outcomesByDeal = new Map<string, Outcome[]>();
-    for (const row of outcomes) {
+    for (const row of (outcomes || [])) {
       const arr = outcomesByDeal.get(row.dealId) ?? [];
       arr.push(row.outcome);
       outcomesByDeal.set(row.dealId, arr);
     }
     const logsByDeal = new Map<string, Array<{ createdAt: Date; outcome: Outcome }>>();
-    for (const row of outcomes) {
+    for (const row of (outcomes || [])) {
       const arr = logsByDeal.get(row.dealId) ?? [];
       arr.push({ createdAt: row.createdAt, outcome: row.outcome });
       logsByDeal.set(row.dealId, arr);
     }
 
     const expiryWarningsByDealId = new Map<string, ReturnType<typeof getExpiryWarning>>();
-    const activeItems = activeDeals
+    const activeItems = (activeDeals || [])
       .filter((deal) => !isInactiveFromOutcomes(outcomesByDeal.get(deal.id) ?? []))
       .map((deal) => {
         const latestLog = latestLogByDeal.get(deal.id) ?? deal.lastActivityAt;
@@ -225,12 +226,12 @@ export async function GET(request: Request) {
           logsByDeal.get(deal.id) ?? [],
         );
         const nextStepStart = istYmdToUtcStart(formatYmdInIST(deal.nextStepDate!));
-        const daysSinceLastActivity = momentum.daysSinceLastActivity;
+        const daysSinceLastActivity = momentum.daysSinceLastActivity || 0;
         const expiryWarning = getExpiryWarning(daysSinceLastActivity);
         expiryWarningsByDealId.set(deal.id, expiryWarning);
-        const daysOverdue = diffDaysFloor(todayStart, nextStepStart);
+        const daysOverdue = diffDaysFloor(todayStart, nextStepStart) || 0;
         const { score } = scoreDeal(
-          { value: deal.value, nextStepDate: deal.nextStepDate },
+          { value: deal.value || 0, nextStepDate: deal.nextStepDate },
           momentum,
           { todayStartUtc: todayStart, upcomingEndUtc: upcomingEnd },
         );
@@ -248,16 +249,16 @@ export async function GET(request: Request) {
         }
         return {
           dealId: deal.id,
-          assigneeId: deal.account.assignedToId,
-          accountName: deal.account.name,
-          owner: deal.owner,
-          coOwner: deal.coOwner,
-          nextStepType: deal.nextStepType,
+          assigneeId: deal.account?.assignedToId ?? null,
+          accountName: deal.account?.name ?? "Unknown",
+          owner: deal.owner ?? null,
+          coOwner: deal.coOwner ?? null,
+          nextStepType: deal.nextStepType ?? null,
           nextStepDate: deal.nextStepDate!.toISOString(),
           lastActivityAt: latestLog.toISOString(),
           daysSinceLastActivity,
           daysOverdue,
-          score,
+          score: score || 0,
           actionMessage,
           reason,
         };
@@ -272,9 +273,9 @@ export async function GET(request: Request) {
       );
       const response: RepTodayResponse = {
         mode: "REP",
-        critical: applyExpiryWarnings(buckets.critical, expiryWarningsByDealId),
-        attention: applyExpiryWarnings(buckets.attention, expiryWarningsByDealId),
-        upcoming: applyExpiryWarnings(buckets.upcoming, expiryWarningsByDealId),
+        critical: applyExpiryWarnings(buckets.critical || [], expiryWarningsByDealId),
+        attention: applyExpiryWarnings(buckets.attention || [], expiryWarningsByDealId),
+        upcoming: applyExpiryWarnings(buckets.upcoming || [], expiryWarningsByDealId),
       };
       return NextResponse.json(response);
     }
@@ -306,8 +307,8 @@ export async function GET(request: Request) {
         color,
         stale,
         hasCritical,
-        criticalCount: buckets.critical.length,
-        attentionCount: buckets.attention.length,
+        criticalCount: buckets.critical.length || 0,
+        attentionCount: buckets.attention.length || 0,
       };
     });
     reps.sort((a, b) => colorOrder(a.color) - colorOrder(b.color));
@@ -321,17 +322,20 @@ export async function GET(request: Request) {
 
     const response: ManagerTodayResponse = {
       mode: "MANAGER",
-      reps,
+      reps: reps || [],
       selectedRepId: targetRepId,
       drilldown: {
-        critical: applyExpiryWarnings(drillBuckets.critical, expiryWarningsByDealId),
-        attention: applyExpiryWarnings(drillBuckets.attention, expiryWarningsByDealId),
-        upcoming: applyExpiryWarnings(drillBuckets.upcoming, expiryWarningsByDealId),
+        critical: applyExpiryWarnings(drillBuckets.critical || [], expiryWarningsByDealId),
+        attention: applyExpiryWarnings(drillBuckets.attention || [], expiryWarningsByDealId),
+        upcoming: applyExpiryWarnings(drillBuckets.upcoming || [], expiryWarningsByDealId),
       },
     };
     return NextResponse.json(response);
   } catch (err) {
-    console.error("TODAY API ERROR", err);
-    return NextResponse.json({ error: "today_failed" }, { status: 500 });
+    console.error("TODAY API ERROR FULL:", err);
+    return NextResponse.json(
+      { error: "today_failed", details: String(err) },
+      { status: 500 }
+    );
   }
 }

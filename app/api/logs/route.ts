@@ -20,6 +20,9 @@ export async function POST(request: Request) {
       include: { account: true },
     });
     if (!deal) return Response.json({ error: "deal not found" }, { status: 404 });
+    if (deal.deletedAt || (deal.account && deal.account.deletedAt)) {
+      return Response.json({ error: "cannot log interaction on deleted deal" }, { status: 410 });
+    }
     const accessError = validateInteractionLogAccess({
       accountAssignedToId: deal.account.assignedToId,
       currentUserId: user.id,

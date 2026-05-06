@@ -203,7 +203,11 @@ export default function LogInteractionPage({
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      addParticipant(filteredParticipantOptions[activeParticipantIndex]?.id ?? filteredParticipantOptions[0].id);
+      const highlighted = filteredParticipantOptions[activeParticipantIndex];
+      const fallback = filteredParticipantOptions[0];
+      const participantToAdd = highlighted ?? fallback;
+      if (!participantToAdd) return;
+      addParticipant(participantToAdd.id);
     }
   }
 

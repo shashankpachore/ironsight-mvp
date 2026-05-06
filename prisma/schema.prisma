@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  engineType = "binary"
 }
 
 datasource db {
@@ -8,23 +9,24 @@ datasource db {
 }
 
 model User {
-  id                String     @id @default(cuid())
-  name              String
-  email             String     @unique
-  password          String
-  role              UserRole
-  managerId         String?
-  assignedAccounts  Account[]  @relation("AssignedAccounts")
-  createdAccounts   Account[]  @relation("CreatedAccounts")
-  requestedAccounts Account[]  @relation("AccountRequestedBy")
-  auditLogsChanged  AuditLog[] @relation("ChangedByUser")
-  deals             Deal[]
-  coOwnedDeals      Deal[]     @relation("DealCoOwner")
-  terminalOwnedDeals Deal[]    @relation("TerminalDealOwner")
+  id                         String                      @id @default(cuid())
+  name                       String
+  email                      String                      @unique
+  password                   String
+  role                       UserRole
+  managerId                  String?
+  lastLoginAt                DateTime?
+  assignedAccounts           Account[]                   @relation("AssignedAccounts")
+  createdAccounts            Account[]                   @relation("CreatedAccounts")
+  requestedAccounts          Account[]                   @relation("AccountRequestedBy")
+  auditLogsChanged           AuditLog[]                  @relation("ChangedByUser")
+  coOwnedDeals               Deal[]                      @relation("DealCoOwner")
+  deals                      Deal[]
+  terminalOwnedDeals         Deal[]                      @relation("TerminalDealOwner")
   interactionLogParticipants InteractionLogParticipant[]
-  pipelineSnapshots PipelineSnapshot[]
-  manager           User?      @relation("ManagerReports", fields: [managerId], references: [id])
-  reports           User[]     @relation("ManagerReports")
+  pipelineSnapshots          PipelineSnapshot[]
+  manager                    User?                       @relation("ManagerReports", fields: [managerId], references: [id])
+  reports                    User[]                      @relation("ManagerReports")
 
   @@index([managerId, role])
 }
@@ -45,31 +47,35 @@ model Account {
   createdBy     User          @relation("CreatedAccounts", fields: [createdById], references: [id])
   requestedBy   User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id])
   deals         Deal[]
+  deletedAt     DateTime?
+  deletedBy     String?
 
   @@index([assignedToId, createdAt])
 }
 
 model Deal {
-  id             String           @id @default(cuid())
-  name           String
-  companyName    String
-  value          Float
-  accountId      String
-  ownerId        String
-  coOwnerId      String?
-  status         DealStatus       @default(ACTIVE)
+  id              String             @id @default(cuid())
+  name            String
+  companyName     String
+  value           Float
+  accountId       String
+  ownerId         String
+  createdAt       DateTime           @default(now())
+  lastActivityAt  DateTime           @default(now())
+  nextStepDate    DateTime?
+  nextStepSource  String?
+  nextStepType    String?
   terminalOwnerId String?
   terminalStage   DealTerminalStage?
-  createdAt      DateTime         @default(now())
-  lastActivityAt DateTime         @default(now())
-  nextStepDate   DateTime?
-  nextStepSource String?
-  nextStepType   String?
-  account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  owner          User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  coOwner        User?            @relation("DealCoOwner", fields: [coOwnerId], references: [id], onDelete: SetNull)
-  terminalOwner  User?            @relation("TerminalDealOwner", fields: [terminalOwnerId], references: [id], onDelete: SetNull)
-  logs           InteractionLog[]
+  status          DealStatus         @default(ACTIVE)
+  coOwnerId       String?
+  account         Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  coOwner         User?              @relation("DealCoOwner", fields: [coOwnerId], references: [id])
+  owner           User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  terminalOwner   User?              @relation("TerminalDealOwner", fields: [terminalOwnerId], references: [id])
+  logs            InteractionLog[]
+  deletedAt       DateTime?
+  deletedBy       String?
 
   @@index([status, createdAt])
   @@index([status, lastActivityAt])
@@ -78,16 +84,16 @@ model Deal {
 }
 
 model InteractionLog {
-  id              String            @id @default(cuid())
+  id              String                      @id @default(cuid())
   dealId          String
   interactionType InteractionType
   outcome         Outcome
   stakeholderType StakeholderType
   notes           String?
-  createdAt       DateTime          @default(now())
-  deal            Deal              @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  risks           InteractionRisk[]
+  createdAt       DateTime                    @default(now())
+  deal            Deal                        @relation(fields: [dealId], references: [id], onDelete: Cascade)
   participants    InteractionLogParticipant[]
+  risks           InteractionRisk[]
 
   @@index([dealId, createdAt])
 }
@@ -95,9 +101,8 @@ model InteractionLog {
 model InteractionLogParticipant {
   logId  String
   userId String
-
-  log  InteractionLog @relation(fields: [logId], references: [id], onDelete: Cascade)
-  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  log    InteractionLog @relation(fields: [logId], references: [id], onDelete: Cascade)
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([logId, userId])
   @@index([userId, logId])
@@ -132,8 +137,8 @@ model PipelineSnapshot {
   createdAt  DateTime @default(now())
   owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
-  @@index([month, ownerId])
   @@unique([month, ownerId, stage])
+  @@index([month, ownerId])
 }
 
 enum UserRole {

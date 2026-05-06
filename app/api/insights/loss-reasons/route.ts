@@ -41,6 +41,7 @@ export async function GET(request: Request) {
   const where = {
     ...accessWhere,
     terminalStage: DealTerminalStage.LOST,
+    deletedAt: null,
   };
 
   const deals = await prisma.deal.findMany({
@@ -96,6 +97,7 @@ export async function GET(request: Request) {
 
     for (let i = 0; i <= lossIndex; i += 1) {
       const log = dealLogs[i];
+      if (!log) continue;
       const stage = LOSS_OUTCOMES.has(log.outcome)
         ? inferredStageBeforeLoss
         : getDealStageFromOutcomes([...cumulativeOutcomes, log.outcome as OutcomeValue]);

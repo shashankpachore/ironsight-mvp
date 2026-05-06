@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { requireRole } from "@/lib/authz";
 import { getDealStage, getMissingSignals } from "@/lib/deals";
 import { enforceExpiry } from "@/lib/expiry";
+import { buildDealWhere } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 
 function escapeCsv(value: string) {
@@ -13,11 +14,12 @@ function escapeCsv(value: string) {
 
 export async function GET(request: Request) {
   const user = await getCurrentUser(request);
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const authzError = requireRole(user, [UserRole.ADMIN, UserRole.MANAGER]);
   if (authzError) return authzError;
 
   const deals = await prisma.deal.findMany({
-    where: {},
+    where: await buildDealWhere(user),
     include: {
       account: {
         include: { assignedTo: true },

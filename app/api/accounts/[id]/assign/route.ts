@@ -20,6 +20,7 @@ export async function POST(
   const { id } = await params;
   const account = await prisma.account.findUnique({ where: { id } });
   if (!account) return NextResponse.json({ error: "account not found" }, { status: 404 });
+  if (account.deletedAt) return NextResponse.json({ error: "cannot assign deleted account" }, { status: 410 });
   if (account.status !== AccountStatus.APPROVED) {
     return NextResponse.json({ error: "cannot assign unapproved account" }, { status: 400 });
   }
@@ -35,7 +36,7 @@ export async function POST(
     });
 
     const deals = await tx.deal.findMany({
-      where: { accountId: id },
+      where: { accountId: id, deletedAt: null },
       select: { id: true },
     });
     const dealIds = deals.map((deal) => deal.id);
@@ -70,6 +71,7 @@ export async function POST(
     await tx.deal.updateMany({
       where: {
         id: { in: activeDealIds },
+        deletedAt: null,
         OR: [
           { coOwnerId: body.userId },
           ...(assignedUser.role === UserRole.MANAGER
@@ -81,7 +83,7 @@ export async function POST(
     });
 
     const syncResult = await tx.deal.updateMany({
-      where: { id: { in: activeDealIds } },
+      where: { id: { in: activeDealIds }, deletedAt: null },
       data: { ownerId: body.userId },
     });
 

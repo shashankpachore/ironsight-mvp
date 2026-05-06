@@ -104,6 +104,7 @@ model User {
   password          String
   role              UserRole
   managerId         String?
+  lastLoginAt       DateTime?
   manager           User?       @relation("ManagerReports", fields: [managerId], references: [id])
   reports           User[]      @relation("ManagerReports")
   deals             Deal[]
@@ -135,6 +136,8 @@ model Account {
   requestedBy  User?         @relation("AccountRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
   assignedTo   User?         @relation("AssignedAccounts", fields: [assignedToId], references: [id], onDelete: SetNull)
   deals        Deal[]
+  deletedAt    DateTime?
+  deletedBy    String?
 
   @@index([assignedToId, createdAt])
 }
@@ -160,6 +163,8 @@ model Deal {
   nextStepDate   DateTime?
   nextStepSource String?
   logs           InteractionLog[]
+  deletedAt      DateTime?
+  deletedBy      String?
 
   @@index([status, createdAt])
   @@index([status, lastActivityAt])

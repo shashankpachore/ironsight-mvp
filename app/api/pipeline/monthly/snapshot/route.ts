@@ -53,3 +53,5 @@ export async function GET(request: Request) {
     throw error;
   }
 }
+
+export const POST = GET;

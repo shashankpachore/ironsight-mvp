@@ -1,6 +1,8 @@
 import { Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
+export const ACTIVE_ONLY = { deletedAt: null } as const;
+
 type AccessUser = {
   id: string;
   role: UserRole;
@@ -46,23 +48,25 @@ export async function getAccessibleUserIds(user: AccessUser): Promise<string[] |
 export async function buildAccountWhere(user: AccessUser): Promise<Prisma.AccountWhereInput> {
   assertValidAccessUser(user);
   const ids = await getAccessibleUserIds(user);
-  if (!ids) return {};
-  return { assignedToId: { in: ids } };
+  if (!ids) return { ...ACTIVE_ONLY };
+  return { assignedToId: { in: ids }, ...ACTIVE_ONLY };
 }
 
 export async function buildDealWhere(user: AccessUser): Promise<Prisma.DealWhereInput> {
   assertValidAccessUser(user);
   const ids = await getAccessibleUserIds(user);
-  if (!ids) return {};
-  return {
-    OR: [
-      { account: { assignedToId: { in: ids } } },
-      { ownerId: { in: ids } },
-      { coOwnerId: { in: ids } },
-      { ownerId: user.id },
-      { coOwnerId: user.id },
-    ],
-  };
+  const filter = ids
+    ? {
+        OR: [
+          { account: { assignedToId: { in: ids } } },
+          { ownerId: { in: ids } },
+          { coOwnerId: { in: ids } },
+          { ownerId: user.id },
+          { coOwnerId: user.id },
+        ],
+      }
+    : {};
+  return { ...filter, ...ACTIVE_ONLY, account: { ...ACTIVE_ONLY } };
 }
 
 export async function canAccessAssignedToId(
@@ -80,17 +84,60 @@ export async function canAccessAssignedToId(
 export async function assertDealAccess(user: AccessUser, dealId: string) {
   assertValidAccessUser(user);
 
+  const deal = await prisma.deal.findUnique({
+    where: { id: dealId },
+    include: { account: { select: { deletedAt: true } } },
+  });
+
+  if (!deal) {
+    throw new Error("NOT_FOUND");
+  }
+
+  if (deal.deletedAt || (deal.account && deal.account.deletedAt)) {
+    throw new Error("DELETED");
+  }
+
   const where = await buildDealWhere(user);
-  const deal = await prisma.deal.findFirst({
+  const accessibleDeal = await prisma.deal.findFirst({
     where: {
       id: dealId,
       ...where,
     },
   });
 
-  if (!deal) {
+  if (!accessibleDeal) {
     throw new Error("ACCESS_DENIED");
   }
 
   return deal;
+}
+
+export async function assertAccountAccess(user: AccessUser, accountId: string) {
+  assertValidAccessUser(user);
+
+  const account = await prisma.account.findUnique({
+    where: { id: accountId },
+  });
+
+  if (!account) {
+    throw new Error("NOT_FOUND");
+  }
+
+  if (account.deletedAt) {
+    throw new Error("DELETED");
+  }
+
+  const where = await buildAccountWhere(user);
+  const accessibleAccount = await prisma.account.findFirst({
+    where: {
+      id: accountId,
+      ...where,
+    },
+  });
+
+  if (!accessibleAccount) {
+    throw new Error("ACCESS_DENIED");
+  }
+
+  return account;
 }

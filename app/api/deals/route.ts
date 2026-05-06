@@ -76,6 +76,9 @@ export async function POST(request: Request) {
     where: { id: body.accountId },
   });
   if (!account) return NextResponse.json({ error: "account not found" }, { status: 404 });
+  if (account.deletedAt) {
+    return NextResponse.json({ error: "cannot create deal for deleted account" }, { status: 410 });
+  }
   const accessError = validateDealCreationAccess({
     account: { status: account.status, assignedToId: account.assignedToId },
     currentUserId: owner.id,
@@ -160,10 +163,14 @@ export async function GET(request: Request) {
   const todayStartUtc = istYmdToUtcStart(todayYmd);
   const upcomingEndUtc = istYmdToUtcStart(addDaysYmd(todayYmd, 2));
 
+  const baseWhere = await buildDealWhere(user);
   const where = {
-    ...(await buildDealWhere(user)),
+    ...baseWhere,
     status: DealStatus.ACTIVE,
   };
+
+  console.log("DEALS API INPUT:", { userId: user.id, query: request.url });
+  console.dir("DEALS WHERE CLAUSE: " + JSON.stringify(where, null, 2));
 
   let deals: DealWithListRelations[];
   try {
@@ -192,7 +199,11 @@ export async function GET(request: Request) {
       orderBy: { createdAt: "desc" },
     });
   } catch (err) {
-    console.error("Failed to load deals", err);
+    const fs = require("fs");
+    const errorDetails =
+      err instanceof Error ? err.stack ?? err.message : String(err);
+    fs.writeFileSync("/Users/shashankpachore/Desktop/IronSight/error_log.txt", errorDetails);
+    console.error("DEALS API ERROR FULL:", err);
     return NextResponse.json({ error: "failed to load deals" }, { status: 500 });
   }
   const activeDeals = getActiveDeals(await enforceExpiry(deals));

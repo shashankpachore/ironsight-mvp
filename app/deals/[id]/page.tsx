@@ -2,6 +2,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { UserRole } from "@prisma/client";
 import { DealValueEditor } from "@/components/deal-value-editor";
+import { DeleteEntityButton } from "@/components/delete-entity-button";
+import { canAccessAssignedToId } from "@/lib/access";
 import { getDealStageFromLogs } from "@/lib/deals";
 import { NEXT_STEP_LABELS, type NextStepTypeValue } from "@/lib/next-step";
 import { prisma } from "@/lib/prisma";
@@ -39,12 +41,22 @@ export default async function DealDetailPage({
     },
   });
 
-  if (!deal) return <main className="p-6">Deal not found.</main>;
+  if (!deal || !currentUser || (deal.account && deal.account.deletedAt)) {
+    return <main className="p-6">Deal not found.</main>;
+  }
+  const canReadViaAssignment = await canAccessAssignedToId(currentUser, deal.account.assignedToId);
+  const canReadAsOwner = deal.ownerId === currentUser.id || deal.coOwnerId === currentUser.id;
+  if (!canReadViaAssignment && !canReadAsOwner) {
+    return <main className="p-6">Deal not found.</main>;
+  }
+
+  const isDeleted = !!deal.deletedAt;
   const stage = getDealStageFromLogs(deal.logs);
   const canEditValue =
-    currentUser?.role === UserRole.ADMIN ||
-    currentUser?.id === deal.ownerId ||
-    (currentUser?.role === UserRole.MANAGER && deal.owner.managerId === currentUser.id);
+    !isDeleted &&
+    (currentUser?.role === UserRole.ADMIN ||
+      currentUser?.id === deal.ownerId ||
+      (currentUser?.role === UserRole.MANAGER && deal.owner.managerId === currentUser.id));
 
   const nextActionLabel =
     deal.nextStepType && deal.nextStepDate
@@ -63,8 +75,29 @@ export default async function DealDetailPage({
       <Link href="/" className="text-sm underline">
         Back to deals
       </Link>
-      <section className="border rounded-lg p-4 space-y-2">
-        <h1 className="text-2xl font-semibold">{deal.account.name}</h1>
+
+      {isDeleted && (
+        <div className="rounded-lg bg-red-50 border border-red-200 p-4">
+          <p className="text-red-800 font-medium">
+            ⚠️ This deal has been archived/deleted and is now read-only.
+          </p>
+        </div>
+      )}
+
+      <section className="border rounded-lg p-4 space-y-2 relative">
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-2xl font-semibold">{deal.account.name}</h1>
+          {!isDeleted && (
+            <DeleteEntityButton
+              entityId={deal.id}
+              entityType="deal"
+              redirectPath="/"
+              confirmationMessage="Are you sure you want to delete this deal? This will archive it."
+              successMessage="Deal archived"
+              isAdmin={currentUser?.role === UserRole.ADMIN}
+            />
+          )}
+        </div>
         <p className="text-sm text-gray-700">Product: {deal.name}</p>
         <p className="text-sm text-gray-700">Owner (primary, accountable): {deal.owner.name}</p>
         {deal.coOwner ? (
@@ -91,12 +124,14 @@ export default async function DealDetailPage({
         <p className="text-sm">Stage: {stage}</p>
         <p className="text-sm">Last activity: {deal.lastActivityAt.toLocaleString()}</p>
 
-        <Link
-          href={`/deals/${deal.id}/log`}
-          className="inline-block mt-3 rounded bg-black px-3 py-2 text-white"
-        >
-          Log Interaction
-        </Link>
+        {!isDeleted && (
+          <Link
+            href={`/deals/${deal.id}/log`}
+            className="inline-block mt-3 rounded bg-black px-3 py-2 text-white"
+          >
+            Log Interaction
+          </Link>
+        )}
       </section>
 
       <section className="border rounded-lg p-4">
